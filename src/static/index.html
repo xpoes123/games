@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>games.djiang.xyz</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main>
+    <h1>games</h1>
+    <p class="tagline">bridge variant for 4, coming soon</p>
+
+    <section id="lobby">
+      <div class="row">
+        <button id="create-btn">Create room</button>
+      </div>
+      <div class="row join-row">
+        <input id="join-code" maxlength="4" placeholder="CODE" />
+        <input id="player-name" maxlength="24" placeholder="your name" />
+        <button id="join-btn">Join</button>
+      </div>
+    </section>
+
+    <section id="room" hidden>
+      <h2>Room <span id="room-code"></span></h2>
+      <ul id="players"></ul>
+      <div id="chat-log"></div>
+      <form id="chat-form" autocomplete="off">
+        <input id="chat-input" placeholder="say something" />
+      </form>
+    </section>
+
+    <footer>games.djiang.xyz</footer>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

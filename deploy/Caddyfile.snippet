@@ -1,0 +1,20 @@
+# Caddy reverse-proxy snippet for games.djiang.xyz.
+# Append to /etc/caddy/Caddyfile (or include via import) and run:
+#   sudo systemctl reload caddy
+#
+# Caddy handles TLS automatically via Let's Encrypt as long as the A record
+# for games.djiang.xyz points at this box (already done).
+
+games.djiang.xyz {
+    encode zstd gzip
+
+    # Health probes get cached statically; everything else proxies.
+    reverse_proxy 127.0.0.1:7781 {
+        # Forward original protocol + host so FastAPI knows it's behind HTTPS.
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+
+        # Keep WebSocket frames flowing for the room sockets.
+        flush_interval -1
+    }
+}

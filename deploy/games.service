@@ -1,0 +1,19 @@
+[Unit]
+Description=games.djiang.xyz — multiplayer card games
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/games
+ExecStart=/opt/games/venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/opt/games/.env
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=games
+
+[Install]
+WantedBy=multi-user.target
