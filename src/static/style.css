@@ -134,6 +134,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   text-align: center;
 }
 .seat.you .name { color: var(--accent); }
+.seat.turn .name { color: var(--fg); font-weight: 600; }
+.seat.turn.you .name { color: var(--accent); }
+.seat.turn .name::before {
+  content: "▸ ";
+  color: var(--accent);
+}
 
 .seat .hand {
   position: relative;   /* slot positioning anchor */

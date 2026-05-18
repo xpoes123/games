@@ -103,7 +103,7 @@ function connect(name) {
       lastState = msg.table;
       players = msg.table.players;
       tricksWon = msg.table.tricks_won || [0, 0, 0, 0];
-      renderSeats();
+      renderSeats();   // arrow indicator depends on lastState; render after assignment
       renderPhase();
     } else if (msg.type === "deal") {
       tricksWon = [0, 0, 0, 0];
@@ -262,13 +262,23 @@ function seatPosition(seatIdx) {
   return POSITIONS[(seatIdx - mySeat + 4) % 4];
 }
 
+function activeSeat() {
+  if (!lastState) return null;
+  if (lastState.phase === "bidding") return lastState.current_bidder;
+  if (lastState.phase === "calling") return lastState.declarer;
+  if (lastState.phase === "playing") return lastState.turn;
+  return null;
+}
+
 function renderSeats() {
+  const active = activeSeat();
   for (let i = 0; i < 4; i++) {
     const pos = seatPosition(i);
     if (!pos) continue;
     const seatEl = tableEl.querySelector(`.seat.${pos}`);
     const p = players[i];
     seatEl.classList.toggle("you", i === mySeat);
+    seatEl.classList.toggle("turn", i === active);
     const t = tricksWon[i] || 0;
     const name = p ? p.name : "—";
     seatEl.querySelector(".name").textContent = t > 0 ? `${name} · ${t}` : name;
@@ -397,7 +407,11 @@ const TRICK_HOLD_MS = 900;     // how long the completed trick stays visible
 const TRICK_COLLECT_MS = 480;
 
 async function handleTrickWon(winnerSeat, newTricks) {
-  // Snapshot which cards are currently in each slot before they get cleared
+  // Hold first so the 4th play animation (~320ms) has time to land in its
+  // slot. If we snapshotted before the hold the most recent card would
+  // still be in flight and get orphaned when its siblings fly to the winner.
+  await new Promise((r) => setTimeout(r, TRICK_HOLD_MS));
+
   const slotCards = [];
   for (const slot of tableEl.querySelectorAll(".play-slot")) {
     const card = slot.firstElementChild;
@@ -408,9 +422,6 @@ async function handleTrickWon(winnerSeat, newTricks) {
     renderSeats();
     return;
   }
-
-  // Hold so the full trick reads
-  await new Promise((r) => setTimeout(r, TRICK_HOLD_MS));
 
   const winnerPos = seatPosition(winnerSeat);
   if (!winnerPos) {
