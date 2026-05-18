@@ -377,16 +377,32 @@ class Table:
         self.tricks_won[winner] += 1
         self.current_trick = []
         self.turn = winner
-        if sum(self.tricks_won) >= 13:
+        # End the hand as soon as the contract outcome is locked in
+        # (made or set), or when all 13 tricks have been played.
+        if self._hand_decided() or sum(self.tricks_won) >= 13:
             self.phase = Phase.DONE
             self.turn = None
-            # Fold this hand's tricks into cumulative totals and rotate the
-            # dealer clockwise for the next deal.
             for i in range(4):
                 self.total_tricks[i] += self.tricks_won[i]
             self.hands_played += 1
             self.dealer = (self.dealer + 1) % 4
         return winner
+
+    def _hand_decided(self) -> bool:
+        """True if the contract outcome can no longer change — declarer's
+        team has already made it, or defenders have already set it."""
+        if self.contract is None or self.declarer is None or self.partner_seat is None:
+            return False
+        target = self.contract.level + 6
+        team_tricks = self.tricks_won[self.declarer] + self.tricks_won[self.partner_seat]
+        if team_tricks >= target:
+            return True
+        defender_tricks = sum(self.tricks_won) - team_tricks
+        # Defenders set the contract once they've won enough to keep
+        # declarer's team below `target` regardless of remaining tricks.
+        if defender_tricks >= 14 - target:
+            return True
+        return False
 
     # ---- player management ----
 
