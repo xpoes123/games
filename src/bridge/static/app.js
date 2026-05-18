@@ -64,33 +64,27 @@ function playTurnBeep() {
     if (!ctx) return;
     const t0 = ctx.currentTime;
 
-    // Marimba-style pluck: sine fundamental + softer harmonics, sharp
-    // attack, exponential decay. Each harmonic decays faster than the
-    // fundamental so the tone gets "softer" toward the tail.
-    const pluck = (freq, when, dur) => {
-      const harmonics = [
-        { mult: 1, gain: 0.18, decay: dur },
-        { mult: 2, gain: 0.08, decay: dur * 0.55 },
-        { mult: 3, gain: 0.035, decay: dur * 0.35 },
-      ];
-      for (const h of harmonics) {
-        const osc = ctx.createOscillator();
-        const g = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(freq * h.mult, t0 + when);
-        osc.connect(g).connect(ctx.destination);
-        g.gain.setValueAtTime(0.0001, t0 + when);
-        g.gain.exponentialRampToValueAtTime(h.gain, t0 + when + 0.006);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0 + when + h.decay);
-        osc.start(t0 + when);
-        osc.stop(t0 + when + h.decay + 0.05);
-      }
+    // A single soft sine tone in the mid-low range. Slow attack so it
+    // doesn't startle, long gentle release for a wind-chime feel. A
+    // quieter octave layer underneath adds warmth without brightness.
+    const layer = (freq, gain) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, t0);
+      osc.connect(g).connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, t0);
+      // ~80ms linear-ish attack — no sharp transient
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.08);
+      // Hold briefly, then long gentle release
+      g.gain.setValueAtTime(gain, t0 + 0.18);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.2);
+      osc.start(t0);
+      osc.stop(t0 + 1.3);
     };
 
-    // Two-note ascending arpeggio, C5 → G5 (perfect fifth — feels calm,
-    // not alarming).
-    pluck(523.25, 0, 0.42);     // C5
-    pluck(783.99, 0.13, 0.55);  // G5
+    layer(440.00, 0.09);  // A4 — primary
+    layer(220.00, 0.025); // A3 — subtle octave below for warmth
   } catch {
     // Ignore audio errors (autoplay policy, etc.)
   }
