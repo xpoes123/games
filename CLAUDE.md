@@ -72,11 +72,57 @@ tests/
 - pytest for tests; run `pytest tests/` before committing
 - No hardcoded secrets — all config via env / `.env`
 
-## Status (2026-05-18)
-- [x] Hello-world FastAPI app with WS-backed rooms and a chat relay
-- [x] systemd + reverse-proxy artifacts in `deploy/`
-- [x] VPS install at `/opt/games`, `games.service` active, Caddy reverse-proxied at https://games.djiang.xyz
-- [ ] Sentinel is currently decommissioned — deploys are manual; redeploy by SSH:
-      `cd /opt/games && git pull && ./venv/bin/pip install -q -e . && systemctl restart games`
-- [ ] Spec the bridge variant — game rules, state machine, persistence
-- [ ] Replace chat-relay WS handler with the real game protocol
+## Status (2026-05-18, end of overnight session)
+
+Game is **playable end-to-end** per David's variant spec. Deploys are
+manual (Sentinel is offline):
+  `cd /opt/games && git pull && systemctl restart games`
+
+### Done
+- [x] FastAPI + WS backend, Caddy-fronted at https://games.djiang.xyz
+- [x] Phase machine: LOBBY → BIDDING → CALLING → PLAYING → DONE
+- [x] Dealing animation (52 cards fly from deck in rotation), hand sort
+      (4-color deck: ♠ dark, ♥ red, ♦ blue, ♣ green; A high, descending
+      within suit)
+- [x] Bidding: dealer opens, clockwise, pass-and-out, NT < ♣ < ♦ < ♥ < ♠
+      strain order, stick-the-dealer if all pass
+- [x] Calling: declarer names a card they don't hold; partner told
+      privately via `you_are_partner`; opponents see only the card
+- [x] Lead direction: declarer for suited, declarer's right for NT
+- [x] Trick play with full rule enforcement:
+      - must follow suit
+      - trump can't be led until broken
+      - trump beats off-suit, higher trump wins between trumps
+- [x] Trick collection animation (all 4 cards collect toward winner)
+- [x] End-of-hand: partner publicly revealed, made/down verdict
+      (`team_tricks` vs `level+6`)
+- [x] Dealer rotation + cumulative trick totals across hands
+- [x] Bid history UI (inline chips below info line)
+- [x] Turn arrow indicator on the active seat
+- [x] Server-side validation surfaces back to client (illegal plays
+      flash a red error in the status line)
+- [x] 4-player end-to-end integration test in
+      `scripts/integration_full_hand.py` — runs a full hand including
+      redeal in ~40s, validates partner reveal + rotation + totals
+
+### Still open (deliberately deferred — David's spec leaves these out)
+- [ ] **Scoring system** — currently we only track tricks. No points,
+      no doubled/redoubled, no game/rubber concept. Ask David when ready.
+- [ ] Reconnect / refresh-safe gameplay — refresh loses your seat
+- [ ] Played-card sizing parity (small visual hiccup when your big
+      card shrinks to standard size on play)
+- [ ] Trump indicator more prominent during play (currently inferred
+      from the contract line)
+- [ ] Multi-table support (currently a single global table; URL share
+      is the entry mechanism)
+
+### Notes
+- Bid ordering: 1NT < 1♣ < 1♦ < 1♥ < 1♠ < 2NT < 2♣ < ... < 7♠.
+  NT is *least*-prioritized in this variant.
+- Stick-the-dealer minimum is 1NT (the lowest possible bid).
+- `play_card` enforces: phase, turn, card-in-hand, follow-suit, trump-
+  break. Returns `(card, error_string)` — `_handle_play` forwards the
+  error to the player via a private `error` WS message.
+- Partnership privacy: `partner_seat` is in `public_state` *only* at
+  phase=DONE. During PLAYING the partner gets `you_are_partner`
+  privately at call time, no other client sees it.
