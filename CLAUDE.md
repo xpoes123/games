@@ -59,10 +59,11 @@ tests/
 - pytest for tests; run `pytest tests/` before committing
 - No hardcoded secrets — all config via env / `.env`
 
-## Status (2026-05-17)
+## Status (2026-05-18)
 - [x] Hello-world FastAPI app with WS-backed rooms and a chat relay
 - [x] systemd + reverse-proxy artifacts in `deploy/`
-- [ ] VPS install (one-time, blocks first deploy)
-- [ ] Register repo with Sentinel for auto-deploys
+- [x] VPS install at `/opt/games`, `games.service` active, Caddy reverse-proxied at https://games.djiang.xyz
+- [ ] Sentinel is currently decommissioned — deploys are manual; redeploy by SSH:
+      `cd /opt/games && git pull && ./venv/bin/pip install -q -e . && systemctl restart games`
 - [ ] Spec the bridge variant — game rules, state machine, persistence
 - [ ] Replace chat-relay WS handler with the real game protocol
