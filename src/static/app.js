@@ -8,6 +8,14 @@ const entryStatus = document.getElementById("entry-status");
 const seatStatus = document.getElementById("seat-status");
 const tableEl = document.getElementById("table");
 const deckEl = document.getElementById("deck");
+const bidArea = document.getElementById("bid-area");
+const bidInfo = document.getElementById("bid-info");
+const bidPanel = document.getElementById("bid-panel");
+const bidLevelSel = document.getElementById("bid-level");
+const bidStrainSel = document.getElementById("bid-strain");
+const bidSubmitBtn = document.getElementById("bid-submit");
+const bidPassBtn = document.getElementById("bid-pass");
+const bidError = document.getElementById("bid-error");
 
 const SUIT_GLYPH = { S: "♠", H: "♥", D: "♦", C: "♣" };
 const RED_SUITS = new Set(["H", "D"]);
@@ -19,6 +27,10 @@ let ws = null;
 let mySeat = null;
 let players = [];
 let tricksWon = [0, 0, 0, 0];
+let lastState = null;
+
+const STRAIN_LABEL = { NT: "NT", C: "♣", D: "♦", H: "♥", S: "♠" };
+const STRAIN_CLASS = { H: "red", D: "red" };
 
 function setStatus(msg) { entryStatus.textContent = msg; }
 
@@ -68,23 +80,24 @@ function connect(name) {
     const msg = JSON.parse(e.data);
     if (msg.type === "welcome") {
       mySeat = msg.your_seat;
+    } else if (msg.type === "error") {
+      bidError.textContent = msg.message || "error";
     } else if (msg.type === "state") {
+      lastState = msg.table;
       players = msg.table.players;
       tricksWon = msg.table.tricks_won || [0, 0, 0, 0];
       renderSeats();
-      seatStatus.textContent = msg.table.dealt
-        ? "dealt"
-        : `${players.length}/4 seated`;
-      dealBtn.disabled = players.length === 0 || msg.table.dealt;
+      renderPhase();
     } else if (msg.type === "deal") {
-      seatStatus.textContent = "dealing...";
       tricksWon = [0, 0, 0, 0];
       renderSeats();
       clearPlayArea();
       animateDeal(msg).then(() => {
         setTimeout(() => {
           sortMyHand();
-          seatStatus.textContent = "dealt";
+          // No status text here — renderPhase (driven by state messages) owns
+          // the seat-status line now.
+          renderPhase();
         }, SORT_DELAY);
       });
     } else if (msg.type === "play") {
@@ -113,13 +126,97 @@ function connect(name) {
 function resetSeats() {
   mySeat = null;
   players = [];
+  lastState = null;
   for (const seat of document.querySelectorAll(".seat")) {
     seat.querySelector(".name").textContent = "";
     seat.querySelector(".hand").innerHTML = "";
     seat.classList.remove("you");
   }
   for (const c of tableEl.querySelectorAll(".card.flying")) c.remove();
+  bidArea.hidden = true;
+  bidPanel.hidden = true;
+  bidError.textContent = "";
 }
+
+function formatBid(bid) {
+  if (!bid) return "—";
+  const cls = STRAIN_CLASS[bid.strain] ? ` class="${STRAIN_CLASS[bid.strain]}"` : "";
+  return `${bid.level}<span${cls}>${STRAIN_LABEL[bid.strain]}</span>`;
+}
+
+function seatName(idx) {
+  const p = players[idx];
+  return p ? p.name : `seat ${idx}`;
+}
+
+function renderPhase() {
+  if (!lastState) return;
+  const phase = lastState.phase;
+
+  if (phase === "lobby") {
+    seatStatus.textContent = `${players.length}/4 seated`;
+    dealBtn.disabled = players.length === 0;
+    bidArea.hidden = true;
+    return;
+  }
+
+  if (phase === "bidding") {
+    dealBtn.disabled = true;
+    bidArea.hidden = false;
+    const cur = lastState.current_bidder;
+    const curBid = lastState.current_bid;
+    const bidder = cur === null ? "—" : seatName(cur);
+    const youTurn = cur === mySeat;
+    const youTag = youTurn ? `<span class="yours">your turn</span> · ` : "";
+    const curTag = curBid
+      ? `current: <span class="current">${formatBid(curBid)}</span> by ${seatName(curBid.seat)}`
+      : "no bid yet";
+    seatStatus.textContent = `bidding · ${youTurn ? "your turn" : bidder + "'s turn"}`;
+    bidInfo.innerHTML = `${youTag}${curTag}`;
+    bidPanel.hidden = !youTurn;
+    if (youTurn) {
+      const isDealerFirstAction = mySeat === lastState.dealer && curBid === null;
+      bidPassBtn.disabled = isDealerFirstAction;
+    }
+    return;
+  }
+
+  if (phase === "calling") {
+    dealBtn.disabled = true;
+    bidArea.hidden = false;
+    bidPanel.hidden = true;
+    const contract = lastState.contract;
+    const declarer = lastState.declarer;
+    seatStatus.textContent = "calling partner";
+    bidInfo.innerHTML = `contract: <span class="current">${formatBid(contract)}</span> by ${seatName(declarer)} · waiting for partner call...`;
+    return;
+  }
+
+  if (phase === "playing" || phase === "done") {
+    bidArea.hidden = false;
+    bidPanel.hidden = true;
+    const contract = lastState.contract;
+    const declarer = lastState.declarer;
+    seatStatus.textContent = phase === "playing" ? "playing" : "hand complete";
+    bidInfo.innerHTML = `contract: <span class="current">${formatBid(contract)}</span> by ${seatName(declarer)}`;
+    dealBtn.disabled = phase !== "done";
+    return;
+  }
+}
+
+bidSubmitBtn.addEventListener("click", () => {
+  if (!ws || ws.readyState !== 1) return;
+  bidError.textContent = "";
+  const level = parseInt(bidLevelSel.value, 10);
+  const strain = bidStrainSel.value;
+  ws.send(JSON.stringify({ type: "bid", level, strain }));
+});
+
+bidPassBtn.addEventListener("click", () => {
+  if (!ws || ws.readyState !== 1) return;
+  bidError.textContent = "";
+  ws.send(JSON.stringify({ type: "pass" }));
+});
 
 function seatPosition(seatIdx) {
   if (mySeat === null) return null;

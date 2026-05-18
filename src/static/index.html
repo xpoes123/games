@@ -38,6 +38,35 @@
           <div class="play-slot" data-pos="right"></div>
         </div>
       </div>
+
+      <div id="bid-area" hidden>
+        <div id="bid-info"></div>
+        <div id="bid-panel" hidden>
+          <label>level
+            <select id="bid-level">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="7">7</option>
+            </select>
+          </label>
+          <label>strain
+            <select id="bid-strain">
+              <option value="NT">NT</option>
+              <option value="C">♣</option>
+              <option value="D">♦</option>
+              <option value="H">♥</option>
+              <option value="S">♠</option>
+            </select>
+          </label>
+          <button id="bid-submit">bid</button>
+          <button id="bid-pass">pass</button>
+          <div id="bid-error"></div>
+        </div>
+      </div>
     </section>
   </main>
   <script src="/static/app.js"></script>

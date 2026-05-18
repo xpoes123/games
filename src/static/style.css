@@ -239,3 +239,54 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   left: 0;
   top: 0;
 }
+
+/* Bidding */
+
+#bid-area {
+  margin-top: 0.75rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+}
+
+#bid-info {
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+#bid-info .yours { color: var(--accent); }
+#bid-info .current { color: var(--fg); }
+
+#bid-panel {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+#bid-panel label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0;
+  gap: 0.25rem;
+}
+
+#bid-panel select {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  outline: none;
+  min-width: 4rem;
+}
+#bid-panel select:focus { border-color: var(--accent); }
+
+#bid-error {
+  color: var(--red);
+  font-size: 0.8rem;
+  flex-basis: 100%;
+  min-height: 1em;
+}
