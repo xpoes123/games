@@ -10,23 +10,15 @@
   <main>
     <h1>games</h1>
 
-    <div id="lobby">
-      <section>
-        <h2>new room</h2>
-        <button id="create-btn">create</button>
-      </section>
+    <section id="entry">
+      <label>name <input id="player-name" maxlength="24" autocomplete="off" autofocus /></label>
+      <button id="join-btn">join</button>
+      <div id="entry-status"></div>
+    </section>
 
-      <section>
-        <h2>join room</h2>
-        <label>code <input id="join-code" maxlength="4" autocomplete="off" /></label>
-        <label>name <input id="player-name" maxlength="24" autocomplete="off" /></label>
-        <button id="join-btn">join</button>
-      </section>
-    </div>
-
-    <section id="room" hidden>
-      <div class="room-head">
-        <span>room <span id="room-code"></span></span>
+    <section id="game" hidden>
+      <div class="game-head">
+        <div id="seat-status"></div>
         <div class="actions">
           <button id="deal-btn" disabled>deal</button>
           <button id="leave-btn">leave</button>
@@ -34,14 +26,12 @@
       </div>
 
       <div id="table">
-        <div class="seat bottom" data-pos="bottom"><div class="name"></div><div class="hand"></div></div>
-        <div class="seat left"   data-pos="left"><div class="name"></div><div class="hand"></div></div>
-        <div class="seat top"    data-pos="top"><div class="name"></div><div class="hand"></div></div>
-        <div class="seat right"  data-pos="right"><div class="name"></div><div class="hand"></div></div>
+        <div class="seat bottom"><div class="name"></div><div class="hand"></div></div>
+        <div class="seat left"><div class="name"></div><div class="hand"></div></div>
+        <div class="seat top"><div class="name"></div><div class="hand"></div></div>
+        <div class="seat right"><div class="name"></div><div class="hand"></div></div>
         <div id="deck"></div>
       </div>
-
-      <div id="room-status"></div>
     </section>
   </main>
   <script src="/static/app.js"></script>

@@ -1,30 +1,23 @@
-import pytest
-
-from src.rooms import ROOM_CODE_LEN, RoomRegistry
+from src.rooms import MAX_PLAYERS, Table
 
 
-@pytest.mark.asyncio
-async def test_create_returns_unique_codes():
-    reg = RoomRegistry()
-    a = await reg.create()
-    b = await reg.create()
-    assert a.code != b.code
-    assert len(a.code) == ROOM_CODE_LEN
-    assert a.code.isupper()
+def test_empty_table_public_state():
+    t = Table()
+    state = t.public_state()
+    assert state == {"players": [], "capacity": MAX_PLAYERS, "dealt": False}
 
 
-@pytest.mark.asyncio
-async def test_get_is_case_insensitive():
-    reg = RoomRegistry()
-    room = await reg.create()
-    assert reg.get(room.code.lower()) is room
-    assert reg.get("ZZZZ") is None
+def test_deal_populates_hands():
+    t = Table()
+    t.deal()
+    assert len(t.hands) == 4
+    assert all(len(h) == 13 for h in t.hands)
+    assert t.public_state()["dealt"] is True
 
 
-@pytest.mark.asyncio
-async def test_drop_if_empty_removes_room():
-    reg = RoomRegistry()
-    room = await reg.create()
-    assert reg.get(room.code) is room
-    await reg.drop_if_empty(room.code)
-    assert reg.get(room.code) is None
+def test_reset_clears_hands():
+    t = Table()
+    t.deal()
+    t.reset()
+    assert t.hands == []
+    assert t.public_state()["dealt"] is False

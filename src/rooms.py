@@ -1,9 +1,12 @@
-"""In-memory room registry. Replace with persistent store once we spec the game."""
+"""Single in-process table — rooms removed for now.
+
+If we ever need multiple concurrent games, swap this for a registry keyed by
+some join code or game type. For now: one table, one game, share the URL.
+"""
 from __future__ import annotations
 
 import asyncio
-import random
-import string
+import secrets
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -13,8 +16,6 @@ if TYPE_CHECKING:
     from fastapi import WebSocket
 
 
-ROOM_CODE_ALPHABET = string.ascii_uppercase
-ROOM_CODE_LEN = 4
 MAX_PLAYERS = 4
 
 
@@ -26,16 +27,14 @@ class Player:
 
 
 @dataclass
-class Room:
-    code: str
+class Table:
     players: list[Player] = field(default_factory=list)
-    hands: list[list[Card]] = field(default_factory=list)  # 4 × 13 once dealt
+    hands: list[list[Card]] = field(default_factory=list)
     dealer: int = 0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def public_state(self) -> dict:
         return {
-            "code": self.code,
             "players": [{"id": p.player_id, "name": p.name} for p in self.players],
             "capacity": MAX_PLAYERS,
             "dealt": bool(self.hands),
@@ -44,30 +43,28 @@ class Room:
     def deal(self) -> None:
         self.hands = deal_four()
 
+    def reset(self) -> None:
+        self.hands = []
 
-class RoomRegistry:
-    def __init__(self) -> None:
-        self._rooms: dict[str, Room] = {}
-        self._lock = asyncio.Lock()
+    async def add_player(self, name: str, ws: "WebSocket") -> Player | None:
+        async with self.lock:
+            if len(self.players) >= MAX_PLAYERS:
+                return None
+            player = Player(player_id=secrets.token_hex(4), name=name, socket=ws)
+            self.players.append(player)
+            return player
 
-    async def create(self) -> Room:
-        async with self._lock:
-            for _ in range(50):
-                code = "".join(random.choice(ROOM_CODE_ALPHABET) for _ in range(ROOM_CODE_LEN))
-                if code not in self._rooms:
-                    room = Room(code=code)
-                    self._rooms[code] = room
-                    return room
-            raise RuntimeError("could not allocate unique room code")
+    async def remove_player(self, player: Player) -> None:
+        async with self.lock:
+            if player in self.players:
+                self.players.remove(player)
+            self.reset()
 
-    def get(self, code: str) -> Room | None:
-        return self._rooms.get(code.upper())
-
-    async def drop_if_empty(self, code: str) -> None:
-        async with self._lock:
-            room = self._rooms.get(code)
-            if room is not None and not room.players:
-                self._rooms.pop(code, None)
+    def seat_of(self, player: Player) -> int | None:
+        try:
+            return self.players.index(player)
+        except ValueError:
+            return None
 
 
-registry = RoomRegistry()
+table = Table()

@@ -1,37 +1,35 @@
-const lobby = document.getElementById("lobby");
-const roomSection = document.getElementById("room");
-const roomCodeEl = document.getElementById("room-code");
+const entry = document.getElementById("entry");
+const game = document.getElementById("game");
 const nameInput = document.getElementById("player-name");
-const joinCode = document.getElementById("join-code");
+const joinBtn = document.getElementById("join-btn");
 const dealBtn = document.getElementById("deal-btn");
 const leaveBtn = document.getElementById("leave-btn");
-const statusEl = document.getElementById("room-status");
+const entryStatus = document.getElementById("entry-status");
+const seatStatus = document.getElementById("seat-status");
 const tableEl = document.getElementById("table");
 const deckEl = document.getElementById("deck");
 
 const SUIT_GLYPH = { S: "♠", H: "♥", D: "♦", C: "♣" };
 const RED_SUITS = new Set(["H", "D"]);
 const POSITIONS = ["bottom", "left", "top", "right"];
-const ROUND_DELAY = 65;   // ms between cards
-const FLIGHT_MS = 260;    // per-card flight duration
+const ROUND_DELAY = 65;
+const FLIGHT_MS = 280;
 
 let ws = null;
 let mySeat = null;
 let players = [];
 
-document.getElementById("create-btn").addEventListener("click", async () => {
-  const r = await fetch("/api/rooms", { method: "POST" });
-  if (!r.ok) return alert("could not create room");
-  const { code } = await r.json();
-  joinCode.value = code;
-  if (!nameInput.value.trim()) nameInput.focus();
+function setStatus(msg) { entryStatus.textContent = msg; }
+
+joinBtn.addEventListener("click", () => {
+  const name = nameInput.value.trim() || "anon";
+  setStatus("connecting...");
+  joinBtn.disabled = true;
+  connect(name);
 });
 
-document.getElementById("join-btn").addEventListener("click", () => {
-  const code = joinCode.value.trim().toUpperCase();
-  const name = nameInput.value.trim() || "anon";
-  if (code.length !== 4) return alert("enter a 4-letter code");
-  connect(code, name);
+nameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") joinBtn.click();
 });
 
 dealBtn.addEventListener("click", () => {
@@ -40,21 +38,29 @@ dealBtn.addEventListener("click", () => {
 
 leaveBtn.addEventListener("click", () => {
   if (ws) try { ws.close(); } catch {}
-  resetRoom();
-  roomSection.hidden = true;
-  lobby.hidden = false;
+  showEntry();
 });
 
-function connect(code, name) {
+function showEntry() {
+  game.hidden = true;
+  entry.hidden = false;
+  joinBtn.disabled = false;
+  setStatus("");
+  resetSeats();
+}
+
+function showGame() {
+  entry.hidden = true;
+  game.hidden = false;
+}
+
+function connect(name) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws/${code}`);
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
 
   ws.addEventListener("open", () => {
     ws.send(JSON.stringify({ name }));
-    lobby.hidden = true;
-    roomSection.hidden = false;
-    roomCodeEl.textContent = code;
-    resetRoom();
+    showGame();
   });
 
   ws.addEventListener("message", (e) => {
@@ -62,28 +68,36 @@ function connect(code, name) {
     if (msg.type === "welcome") {
       mySeat = msg.your_seat;
     } else if (msg.type === "state") {
-      players = msg.room.players;
+      players = msg.table.players;
       renderSeats();
-      dealBtn.disabled = players.length !== 4 || msg.room.dealt;
-      statusEl.textContent =
-        players.length < 4
-          ? `waiting for ${4 - players.length} more player${4 - players.length === 1 ? "" : "s"}...`
-          : msg.room.dealt
-          ? ""
-          : "ready to deal";
+      const remaining = 4 - players.length;
+      seatStatus.textContent = remaining > 0
+        ? `waiting for ${remaining} more player${remaining === 1 ? "" : "s"}...`
+        : msg.table.dealt ? "dealt" : "ready to deal";
+      dealBtn.disabled = remaining > 0 || msg.table.dealt;
     } else if (msg.type === "deal") {
-      statusEl.textContent = "";
-      animateDeal(msg);
+      seatStatus.textContent = "dealing...";
+      animateDeal(msg).then(() => { seatStatus.textContent = "dealt"; });
     }
   });
 
   ws.addEventListener("close", (e) => {
-    statusEl.textContent = `disconnected${e.reason ? `: ${e.reason}` : ""}`;
-    dealBtn.disabled = true;
+    setStatus(`disconnected${e.reason ? `: ${e.reason}` : ""}`);
+    joinBtn.disabled = false;
+    if (!game.hidden) {
+      // We were in the game; bounce back to entry on disconnect
+      game.hidden = true;
+      entry.hidden = false;
+    }
+  });
+
+  ws.addEventListener("error", () => {
+    setStatus("connection error");
+    joinBtn.disabled = false;
   });
 }
 
-function resetRoom() {
+function resetSeats() {
   mySeat = null;
   players = [];
   for (const seat of document.querySelectorAll(".seat")) {
@@ -91,7 +105,6 @@ function resetRoom() {
     seat.querySelector(".hand").innerHTML = "";
     seat.classList.remove("you");
   }
-  // Clean any in-flight cards from a previous deal
   for (const c of tableEl.querySelectorAll(".card.flying")) c.remove();
 }
 
@@ -111,66 +124,103 @@ function renderSeats() {
   }
 }
 
-function animateDeal({ dealer, your_seat, hands }) {
+function slotOffset(seatPos, idx) {
+  // Returns { left, top } in pixels within the seat's hand container.
+  // Strides chosen so 13 cards fit in the configured hand dimensions.
+  const STRIDE_H = 18;       // top seat
+  const STRIDE_V = 16;       // left/right
+  const MY_STRIDE = 22;      // bottom (you)
+  if (seatPos === "bottom") return { left: idx * MY_STRIDE, top: 0 };
+  if (seatPos === "top")    return { left: idx * STRIDE_H, top: 0 };
+  if (seatPos === "left")   return { left: 0, top: idx * STRIDE_V };
+  if (seatPos === "right")  return { left: 0, top: idx * STRIDE_V };
+}
+
+function makeCardEl(card, faceUp) {
+  const el = document.createElement("div");
+  el.className = "card";
+  if (faceUp && !card.hidden) {
+    el.classList.add("face");
+    if (RED_SUITS.has(card.suit)) el.classList.add("red");
+    el.innerHTML = `<span class="rank">${card.rank}</span><span class="suit">${SUIT_GLYPH[card.suit]}</span>`;
+  }
+  return el;
+}
+
+async function animateDeal({ dealer, your_seat, hands }) {
   mySeat = your_seat;
-  // Clear prior hands but keep names/seat structure
-  for (const seat of document.querySelectorAll(".seat .hand")) seat.innerHTML = "";
+  for (const h of document.querySelectorAll(".seat .hand")) h.innerHTML = "";
   for (const c of tableEl.querySelectorAll(".card.flying")) c.remove();
 
-  // Per-seat in-flight counter so we know each card's destination slot
-  const dealt = [0, 0, 0, 0];
+  const seatDealt = [0, 0, 0, 0];
+  const animations = [];
 
   let step = 0;
   for (let round = 0; round < 13; round++) {
     for (let r = 0; r < 4; r++) {
       const seat = (dealer + 1 + r) % 4;
       const card = hands[seat][round];
-      const seatPos = seatPosition(seat);
-      const targetIdx = dealt[seat]++;
-      setTimeout(() => flyCard(seatPos, card, targetIdx, seat), step * ROUND_DELAY);
+      const slot = seatDealt[seat]++;
+      animations.push(
+        new Promise((resolve) => {
+          setTimeout(() => flyCard(seat, card, slot).then(resolve), step * ROUND_DELAY);
+        })
+      );
       step++;
     }
   }
+  await Promise.all(animations);
 }
 
-function flyCard(seatPos, card, targetIdx, seatIdx) {
-  const handEl = tableEl.querySelector(`.seat.${seatPos} .hand`);
+function flyCard(seatIdx, card, slot) {
+  const seatPos = seatPosition(seatIdx);
+  const seatEl = tableEl.querySelector(`.seat.${seatPos}`);
+  const handEl = seatEl.querySelector(".hand");
   const isYou = seatIdx === mySeat;
 
-  // Create the destination card (final resting state) so layout reserves a slot
-  const finalCard = document.createElement("div");
-  finalCard.className = "card";
-  if (isYou && !card.hidden) {
-    finalCard.classList.add("face");
-    if (RED_SUITS.has(card.suit)) finalCard.classList.add("red");
-    finalCard.innerHTML = `<span class="rank">${card.rank}</span><span class="suit">${SUIT_GLYPH[card.suit]}</span>`;
-  }
-  finalCard.style.visibility = "hidden";
-  handEl.appendChild(finalCard);
+  // Final card in its destination slot (initially hidden so position is known)
+  const target = makeCardEl(card, isYou);
+  const offset = slotOffset(seatPos, slot);
+  target.style.left = `${offset.left}px`;
+  target.style.top = `${offset.top}px`;
+  target.style.visibility = "hidden";
+  handEl.appendChild(target);
 
-  // Compute target rect after layout, then animate a separate "flying" clone
-  const targetRect = finalCard.getBoundingClientRect();
+  // Compute table-space coordinates for both start (deck) and end (target)
   const tableRect = tableEl.getBoundingClientRect();
   const deckRect = deckEl.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
 
-  const fly = finalCard.cloneNode(true);
+  const startX = deckRect.left - tableRect.left;
+  const startY = deckRect.top - tableRect.top;
+  const endX = targetRect.left - tableRect.left;
+  const endY = targetRect.top - tableRect.top;
+
+  // Flying clone, absolutely positioned in the table coordinate space
+  const fly = makeCardEl(card, isYou);
   fly.classList.add("flying");
-  fly.style.visibility = "visible";
-  fly.style.left = `${deckRect.left - tableRect.left}px`;
-  fly.style.top = `${deckRect.top - tableRect.top}px`;
-  fly.style.transition = `transform ${FLIGHT_MS}ms cubic-bezier(.2,.7,.2,1)`;
-  fly.style.transform = "translate(0,0)";
+  fly.style.left = `${startX}px`;
+  fly.style.top = `${startY}px`;
+  // Match the destination card size — for "you" seat the card is larger
+  if (isYou) {
+    fly.style.width = "var(--my-card-w)";
+    fly.style.height = "var(--my-card-h)";
+  }
   tableEl.appendChild(fly);
 
-  const dx = targetRect.left - deckRect.left;
-  const dy = targetRect.top - deckRect.top;
+  const anim = fly.animate(
+    [
+      { transform: "translate(0, 0)" },
+      { transform: `translate(${endX - startX}px, ${endY - startY}px)` },
+    ],
+    { duration: FLIGHT_MS, easing: "cubic-bezier(.2,.7,.2,1)", fill: "forwards" },
+  );
 
-  requestAnimationFrame(() => {
-    fly.style.transform = `translate(${dx}px, ${dy}px)`;
-  });
-
-  fly.addEventListener("transitionend", () => {
-    finalCard.style.visibility = "visible";
+  return anim.finished.then(() => {
+    target.style.visibility = "visible";
     fly.remove();
-  }, { once: true });
+  }).catch(() => {
+    target.style.visibility = "visible";
+    fly.remove();
+  });
 }

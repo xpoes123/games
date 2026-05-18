@@ -10,6 +10,14 @@
   --card-bg: #d5dbf2;
   --card-fg: #1a1b26;
   --back: #2f3650;
+
+  --card-w: 28px;
+  --card-h: 40px;
+  --my-card-w: 36px;
+  --my-card-h: 52px;
+  --stride-h: 18px;       /* horizontal overlap stride (top seat) */
+  --stride-v: 16px;       /* vertical overlap stride (left/right seats) */
+  --my-stride: 22px;      /* my hand stride */
 }
 
 * { box-sizing: border-box; }
@@ -24,38 +32,18 @@ body {
 }
 
 main {
-  max-width: 720px;
+  max-width: 800px;
   margin: 0 auto;
   padding: 2rem 1rem;
 }
 
-h1 {
-  font-size: 1.25rem;
-  font-weight: 600;
-  margin: 0 0 1.5rem;
-}
+h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 1.5rem; }
 
-h2 {
-  font-size: 0.85rem;
-  font-weight: 600;
-  text-transform: lowercase;
-  margin: 0 0 0.75rem;
-  color: var(--muted);
-}
-
-#lobby {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: 1fr 1fr;
-}
-@media (max-width: 520px) {
-  #lobby { grid-template-columns: 1fr; }
-}
-
-section {
+#entry {
   background: var(--panel);
   border: 1px solid var(--border);
   padding: 1rem;
+  max-width: 360px;
 }
 
 label { display: block; margin-bottom: 0.5rem; color: var(--muted); }
@@ -84,33 +72,27 @@ button {
 button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-#create-btn, #join-btn { width: 100%; margin-top: 0.25rem; }
+#join-btn { width: 100%; margin-top: 0.25rem; }
 
-/* Room */
+#entry-status { color: var(--muted); margin-top: 0.5rem; font-size: 0.85rem; min-height: 1.25em; }
 
-#room { padding: 1rem; }
+/* Game */
 
-.room-head {
+.game-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 0.75rem;
   color: var(--muted);
 }
-#room-code { color: var(--accent); }
 .actions { display: flex; gap: 0.5rem; }
-
-#room-status { color: var(--muted); margin-top: 0.75rem; font-size: 0.85rem; min-height: 1.25em; }
-
-/* Table */
 
 #table {
   position: relative;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  height: 520px;
   background: #1f2335;
   border: 1px solid var(--border);
-  overflow: hidden;
 }
 
 #deck {
@@ -123,6 +105,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   background: var(--back);
   border: 1px solid var(--border);
   box-shadow: 1px 1px 0 var(--border), 2px 2px 0 var(--border);
+  z-index: 1;
 }
 
 .seat {
@@ -137,28 +120,58 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--muted);
   font-size: 0.8rem;
   white-space: nowrap;
+  text-align: center;
 }
 .seat.you .name { color: var(--accent); }
 
 .seat .hand {
-  position: relative;
-  display: flex;
-  gap: 2px;
-  min-height: 60px;
+  position: relative;   /* slot positioning anchor */
 }
 
-.seat.bottom { left: 50%; bottom: 8px;  transform: translateX(-50%); }
-.seat.top    { left: 50%; top: 8px;     transform: translateX(-50%); }
-.seat.left   { top: 50%;  left: 8px;    transform: translateY(-50%); }
-.seat.right  { top: 50%;  right: 8px;   transform: translateY(-50%); }
+/* Bottom (you): wide horizontal fan */
+.seat.bottom {
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+}
+.seat.bottom .hand {
+  width: calc(var(--my-stride) * 12 + var(--my-card-w));
+  height: var(--my-card-h);
+}
 
-.seat.left .hand, .seat.right .hand { flex-direction: column; min-height: 0; }
+/* Top: compact horizontal */
+.seat.top {
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+}
+.seat.top .hand {
+  width: calc(var(--stride-h) * 12 + var(--card-w));
+  height: var(--card-h);
+}
+
+/* Left/right: compact vertical */
+.seat.left {
+  top: 50%;
+  left: 16px;
+  transform: translateY(-50%);
+}
+.seat.right {
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+}
+.seat.left .hand, .seat.right .hand {
+  width: var(--card-w);
+  height: calc(var(--stride-v) * 12 + var(--card-h));
+}
 
 /* Cards */
 
 .card {
-  width: 28px;
-  height: 40px;
+  position: absolute;
+  width: var(--card-w);
+  height: var(--card-h);
   border: 1px solid var(--border);
   background: var(--back);
   display: flex;
@@ -168,10 +181,13 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-size: 0.85rem;
   font-weight: 600;
   user-select: none;
-  flex-shrink: 0;
 }
 
-.seat.bottom .card { width: 32px; height: 46px; }
+.seat.bottom .card {
+  width: var(--my-card-w);
+  height: var(--my-card-h);
+  font-size: 0.95rem;
+}
 
 .card.face {
   background: var(--card-bg);
@@ -179,10 +195,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   line-height: 1;
 }
 .card.face.red { color: var(--red); }
-.card.face .rank { font-size: 0.85rem; }
-.card.face .suit { font-size: 0.9rem; }
+.card.face .rank { font-size: 0.9rem; }
+.card.face .suit { font-size: 1rem; }
 
-.card.flying {
-  position: absolute;
-  z-index: 5;
-}
+.card.flying { z-index: 10; pointer-events: none; }
