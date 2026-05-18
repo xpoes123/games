@@ -142,6 +142,12 @@ class Table:
             "turn": self.turn,
             "trump_broken": self.trump_broken,
         }
+        # In-flight trick — needed on clients so they can reconcile play
+        # slots after a tab regains focus (background tabs throttle
+        # animations and can leave orphaned cards).
+        state["current_trick"] = [
+            {"seat": s, "card": c.to_json()} for s, c in self.current_trick
+        ]
         # Session-wide cumulative tricks (across all hands this lobby).
         state["total_tricks"] = list(self.total_tricks)
         state["hands_played"] = self.hands_played

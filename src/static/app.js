@@ -4,6 +4,7 @@ const nameInput = document.getElementById("player-name");
 const joinBtn = document.getElementById("join-btn");
 const dealBtn = document.getElementById("deal-btn");
 const leaveBtn = document.getElementById("leave-btn");
+const muteBtn = document.getElementById("mute-btn");
 const entryStatus = document.getElementById("entry-status");
 const seatStatus = document.getElementById("seat-status");
 const tableEl = document.getElementById("table");
@@ -34,6 +35,65 @@ let players = [];
 let tricksWon = [0, 0, 0, 0];
 let lastState = null;
 let iAmPartner = false;   // private: true if server told me I'm the partner
+let lastWasMyTurn = false; // for turn-sound edge detection
+
+let muted = localStorage.getItem("games-muted") === "1";
+function updateMuteBtn() { muteBtn.textContent = muted ? "unmute" : "mute"; }
+updateMuteBtn();
+muteBtn.addEventListener("click", () => {
+  muted = !muted;
+  localStorage.setItem("games-muted", muted ? "1" : "0");
+  updateMuteBtn();
+});
+
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    audioCtx = new AC();
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+
+function playTurnBeep() {
+  if (muted) return;
+  try {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const tone = (freq, when, dur) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain).connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + when);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + when);
+      gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + when + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + when + dur);
+      osc.start(ctx.currentTime + when);
+      osc.stop(ctx.currentTime + when + dur + 0.03);
+    };
+    tone(880, 0, 0.14);     // A5
+    tone(1175, 0.13, 0.18); // D6 — short two-tone chime
+  } catch {
+    // Ignore audio errors (autoplay policy, etc.)
+  }
+}
+
+function isMyTurn() {
+  if (!lastState || mySeat === null) return false;
+  if (lastState.phase === "bidding") return lastState.current_bidder === mySeat;
+  if (lastState.phase === "calling") return lastState.declarer === mySeat;
+  if (lastState.phase === "playing") return lastState.turn === mySeat;
+  return false;
+}
+
+function maybePlayTurnSound() {
+  const now = isMyTurn();
+  if (now && !lastWasMyTurn) playTurnBeep();
+  lastWasMyTurn = now;
+}
 
 const STRAIN_LABEL = { NT: "NT", C: "♣", D: "♦", H: "♥", S: "♠" };
 const STRAIN_CLASS = {
@@ -109,6 +169,7 @@ function connect(name) {
       renderSeats();   // arrow indicator depends on lastState; render after assignment
       renderPhase();
       renderBidHistory();
+      maybePlayTurnSound();
     } else if (msg.type === "deal") {
       tricksWon = [0, 0, 0, 0];
       iAmPartner = false;
@@ -288,6 +349,29 @@ function flashStatusError(text) {
     statusErrorTimer = null;
   }, 2000);
 }
+
+function reconcilePlayArea() {
+  // Authoritative source: lastState.current_trick. Clear flying clones
+  // (which may be orphaned by paused animations) and force each play slot
+  // to match the server's view.
+  if (!lastState) return;
+  for (const fly of tableEl.querySelectorAll(".card.flying")) fly.remove();
+  const expected = new Map();
+  for (const entry of lastState.current_trick || []) {
+    const pos = seatPosition(entry.seat);
+    if (pos) expected.set(pos, entry.card);
+  }
+  for (const slot of tableEl.querySelectorAll(".play-slot")) {
+    const pos = slot.dataset.pos;
+    const want = expected.get(pos);
+    slot.innerHTML = "";
+    if (want) slot.appendChild(makeCardEl(want, true));
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") reconcilePlayArea();
+});
 
 function renderBidHistory() {
   if (!lastState) { bidHistoryEl.innerHTML = ""; return; }
