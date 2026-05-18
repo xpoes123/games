@@ -59,7 +59,7 @@ function renderState(room) {
 function appendChat(from, body) {
   if (!body) return;
   const line = document.createElement("div");
-  line.className = "line";
+  line.className = from === "system" ? "line system" : "line";
   const f = document.createElement("span");
   f.className = "from";
   f.textContent = from;
@@ -68,6 +68,14 @@ function appendChat(from, body) {
   chatLog.appendChild(line);
   chatLog.scrollTop = chatLog.scrollHeight;
 }
+
+document.getElementById("leave-btn").addEventListener("click", () => {
+  if (ws) try { ws.close(); } catch {}
+  roomSection.hidden = true;
+  lobby.hidden = false;
+  playersEl.innerHTML = "";
+  chatLog.innerHTML = "";
+});
 
 chatForm.addEventListener("submit", (e) => {
   e.preventDefault();

@@ -8,26 +8,43 @@
 </head>
 <body>
   <main>
-    <h1>games</h1>
-    <p class="tagline">bridge variant for 4, coming soon</p>
+    <header class="hero">
+      <h1>games</h1>
+      <p class="tagline">bridge variant for 4 · testing</p>
+    </header>
 
-    <section id="lobby">
-      <div class="row">
-        <button id="create-btn">Create room</button>
-      </div>
-      <div class="row join-row">
-        <input id="join-code" maxlength="4" placeholder="CODE" />
-        <input id="player-name" maxlength="24" placeholder="your name" />
-        <button id="join-btn">Join</button>
-      </div>
-    </section>
+    <div id="lobby" class="cards">
+      <section class="card">
+        <h2>New room</h2>
+        <p class="hint">Spin up a fresh table. You'll get a 4-letter code to share.</p>
+        <button id="create-btn" class="primary block">Create room</button>
+      </section>
 
-    <section id="room" hidden>
-      <h2>Room <span id="room-code"></span></h2>
+      <section class="card">
+        <h2>Join room</h2>
+        <p class="hint">Have a code from a friend? Drop in.</p>
+        <label class="field">
+          <span>Room code</span>
+          <input id="join-code" maxlength="4" placeholder="ABCD" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Your name</span>
+          <input id="player-name" maxlength="24" placeholder="anonymous" autocomplete="off" />
+        </label>
+        <button id="join-btn" class="primary block">Join</button>
+      </section>
+    </div>
+
+    <section id="room" class="card" hidden>
+      <header class="room-head">
+        <h2>Room <span id="room-code"></span></h2>
+        <button id="leave-btn" class="ghost">Leave</button>
+      </header>
       <ul id="players"></ul>
       <div id="chat-log"></div>
       <form id="chat-form" autocomplete="off">
         <input id="chat-input" placeholder="say something" />
+        <button type="submit" class="primary">Send</button>
       </form>
     </section>
 
