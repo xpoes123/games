@@ -30,6 +30,7 @@ class Player:
 class Table:
     players: list[Player] = field(default_factory=list)
     hands: list[list[Card]] = field(default_factory=list)
+    played: list[tuple[int, Card]] = field(default_factory=list)
     dealer: int = 0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -42,9 +43,23 @@ class Table:
 
     def deal(self) -> None:
         self.hands = deal_four()
+        self.played = []
 
     def reset(self) -> None:
         self.hands = []
+        self.played = []
+
+    def play_card(self, seat: int, rank: str, suit: str) -> Card | None:
+        """Remove the named card from seat's hand and record it as played."""
+        if seat < 0 or seat >= len(self.hands):
+            return None
+        hand = self.hands[seat]
+        for i, c in enumerate(hand):
+            if c.rank == rank and c.suit == suit:
+                hand.pop(i)
+                self.played.append((seat, c))
+                return c
+        return None
 
     async def add_player(self, name: str, ws: "WebSocket") -> Player | None:
         async with self.lock:

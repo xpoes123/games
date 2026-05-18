@@ -49,6 +49,25 @@ async def _broadcast_state(t: Table) -> None:
     await _broadcast(t, {"type": "state", "table": t.public_state()})
 
 
+async def _handle_play(t: Table, player: Player, msg: dict) -> None:
+    rank = msg.get("rank")
+    suit = msg.get("suit")
+    if not isinstance(rank, str) or not isinstance(suit, str):
+        return
+    async with t.lock:
+        seat = t.seat_of(player)
+        if seat is None:
+            return
+        card = t.play_card(seat, rank, suit)
+    if card is None:
+        return
+    await _broadcast(t, {
+        "type": "play",
+        "seat": seat,
+        "card": card.to_json(),
+    })
+
+
 async def _handle_deal(t: Table) -> None:
     async with t.lock:
         # TODO: tighten back to `!= MAX_PLAYERS` once the game logic is in.
@@ -102,8 +121,11 @@ async def table_socket(ws: WebSocket) -> None:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if msg.get("type") == "deal":
+            action = msg.get("type")
+            if action == "deal":
                 await _handle_deal(table)
+            elif action == "play":
+                await _handle_play(table, player, msg)
     except WebSocketDisconnect:
         pass
     finally:

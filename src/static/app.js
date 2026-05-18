@@ -76,12 +76,15 @@ function connect(name) {
       dealBtn.disabled = players.length === 0 || msg.table.dealt;
     } else if (msg.type === "deal") {
       seatStatus.textContent = "dealing...";
+      clearPlayArea();
       animateDeal(msg).then(() => {
         setTimeout(() => {
           sortMyHand();
           seatStatus.textContent = "dealt";
         }, SORT_DELAY);
       });
+    } else if (msg.type === "play") {
+      animatePlay(msg.seat, msg.card);
     }
   });
 
@@ -153,6 +156,21 @@ function makeCardEl(card, faceUp) {
   return el;
 }
 
+function makeMyCardEl(card) {
+  const el = makeCardEl(card, true);
+  el.addEventListener("click", () => playCard(card));
+  return el;
+}
+
+function playCard(card) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: "play", rank: card.rank, suit: card.suit }));
+}
+
+function clearPlayArea() {
+  for (const slot of tableEl.querySelectorAll(".play-slot")) slot.innerHTML = "";
+}
+
 const RANK_ORDER = { "2": 0, "3": 1, "4": 2, "5": 3, "6": 4, "7": 5, "8": 6, "9": 7, "T": 8, "J": 9, "Q": 10, "K": 11, "A": 12 };
 const SUIT_ORDER = { S: 0, H: 1, D: 2, C: 3 };
 const MY_STRIDE = 22;
@@ -210,6 +228,84 @@ async function animateDeal({ dealer, your_seat, hands }) {
   await Promise.all(animations);
 }
 
+function repackHand(seatPos) {
+  // For non-bottom seats: re-position remaining cards to fill the gap after a play.
+  const handEl = tableEl.querySelector(`.seat.${seatPos} .hand`);
+  const cards = [...handEl.children];
+  cards.forEach((card, idx) => {
+    const off = slotOffset(seatPos, idx);
+    const oldLeft = parseFloat(card.style.left) || 0;
+    const oldTop = parseFloat(card.style.top) || 0;
+    if (oldLeft === off.left && oldTop === off.top) return;
+    card.style.left = `${off.left}px`;
+    card.style.top = `${off.top}px`;
+    card.animate(
+      [
+        { transform: `translate(${oldLeft - off.left}px, ${oldTop - off.top}px)` },
+        { transform: "translate(0, 0)" },
+      ],
+      { duration: 240, easing: "ease-out" },
+    );
+  });
+}
+
+const PLAY_MS = 320;
+
+function animatePlay(seatIdx, card) {
+  const seatPos = seatPosition(seatIdx);
+  if (!seatPos) return;
+  const handEl = tableEl.querySelector(`.seat.${seatPos} .hand`);
+  const isYou = seatIdx === mySeat;
+
+  // Source: the specific card for "you", any (last) card for other seats
+  let sourceEl;
+  if (isYou) {
+    sourceEl = handEl.querySelector(`[data-rank="${card.rank}"][data-suit="${card.suit}"]`);
+  } else {
+    sourceEl = handEl.lastElementChild;
+  }
+  if (!sourceEl) return;
+
+  const tableRect = tableEl.getBoundingClientRect();
+  const sourceRect = sourceEl.getBoundingClientRect();
+  const startX = sourceRect.left - tableRect.left;
+  const startY = sourceRect.top - tableRect.top;
+
+  const slot = tableEl.querySelector(`.play-slot[data-pos="${seatPos}"]`);
+  const slotRect = slot.getBoundingClientRect();
+  const endX = slotRect.left - tableRect.left;
+  const endY = slotRect.top - tableRect.top;
+
+  // Remove the source from the hand and re-pack remaining cards
+  sourceEl.remove();
+  if (isYou) sortMyHand(); else repackHand(seatPos);
+
+  // Flying clone (face-up — the played card is revealed for everyone)
+  const fly = makeCardEl(card, true);
+  fly.classList.add("flying");
+  fly.style.left = `${startX}px`;
+  fly.style.top = `${startY}px`;
+  // Standardise played-card size regardless of source seat
+  fly.style.width = "var(--card-w)";
+  fly.style.height = "var(--card-h)";
+  tableEl.appendChild(fly);
+
+  const anim = fly.animate(
+    [
+      { transform: "translate(0, 0)" },
+      { transform: `translate(${endX - startX}px, ${endY - startY}px)` },
+    ],
+    { duration: PLAY_MS, easing: "cubic-bezier(.2,.7,.2,1)" },
+  );
+
+  anim.finished.then(() => {
+    const landed = makeCardEl(card, true);
+    slot.innerHTML = "";  // one card per slot — most recent wins
+    slot.appendChild(landed);
+    fly.remove();
+  }).catch(() => fly.remove());
+}
+
 function flyCard(seatIdx, card, slot) {
   const seatPos = seatPosition(seatIdx);
   const seatEl = tableEl.querySelector(`.seat.${seatPos}`);
@@ -217,7 +313,7 @@ function flyCard(seatIdx, card, slot) {
   const isYou = seatIdx === mySeat;
 
   // Final card in its destination slot (initially hidden so position is known)
-  const target = makeCardEl(card, isYou);
+  const target = isYou ? makeMyCardEl(card) : makeCardEl(card, false);
   const offset = slotOffset(seatPos, slot);
   target.style.left = `${offset.left}px`;
   target.style.top = `${offset.top}px`;

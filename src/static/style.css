@@ -198,7 +198,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .card.face .rank { font-size: 0.9rem; }
 .card.face .suit { font-size: 1rem; }
 
-.card.flying { z-index: 10; pointer-events: none; }
+.card.flying { z-index: 20; pointer-events: none; }
 
 .seat.bottom .card.face {
   cursor: pointer;
@@ -208,4 +208,34 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   transform: translateY(-10px);
   z-index: 100;
   border-color: var(--accent);
+}
+
+/* Play area — 4 slots arranged like a cross around the center */
+
+#play-area {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  z-index: 2;
+}
+
+.play-slot {
+  position: absolute;
+  width: var(--card-w);
+  height: var(--card-h);
+}
+
+/* Slot positions relative to the (top: 50%, left: 50%) anchor.
+   Cards sit just outside the deck (which is 42×60 centered). */
+.play-slot[data-pos="bottom"] { transform: translate(-50%, 36px); }
+.play-slot[data-pos="top"]    { transform: translate(-50%, calc(-100% - 36px)); }
+.play-slot[data-pos="left"]   { transform: translate(calc(-100% - 32px), -50%); }
+.play-slot[data-pos="right"]  { transform: translate(32px, -50%); }
+
+.play-slot .card {
+  position: relative;
+  left: 0;
+  top: 0;
 }
