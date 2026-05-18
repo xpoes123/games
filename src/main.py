@@ -59,13 +59,23 @@ async def _handle_play(t: Table, player: Player, msg: dict) -> None:
         if seat is None:
             return
         card = t.play_card(seat, rank, suit)
-    if card is None:
-        return
+        if card is None:
+            return
+        winner = t.resolve_trick_if_complete()
+        tricks_snapshot = list(t.tricks_won)
+
     await _broadcast(t, {
         "type": "play",
         "seat": seat,
         "card": card.to_json(),
     })
+
+    if winner is not None:
+        await _broadcast(t, {
+            "type": "trick_won",
+            "winner": winner,
+            "tricks_won": tricks_snapshot,
+        })
 
 
 async def _handle_deal(t: Table) -> None:

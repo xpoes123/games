@@ -4,7 +4,12 @@ from src.rooms import MAX_PLAYERS, Table
 def test_empty_table_public_state():
     t = Table()
     state = t.public_state()
-    assert state == {"players": [], "capacity": MAX_PLAYERS, "dealt": False}
+    assert state == {
+        "players": [],
+        "capacity": MAX_PLAYERS,
+        "dealt": False,
+        "tricks_won": [0, 0, 0, 0],
+    }
 
 
 def test_deal_populates_hands():

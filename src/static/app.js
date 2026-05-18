@@ -18,6 +18,7 @@ const FLIGHT_MS = 280;
 let ws = null;
 let mySeat = null;
 let players = [];
+let tricksWon = [0, 0, 0, 0];
 
 function setStatus(msg) { entryStatus.textContent = msg; }
 
@@ -69,6 +70,7 @@ function connect(name) {
       mySeat = msg.your_seat;
     } else if (msg.type === "state") {
       players = msg.table.players;
+      tricksWon = msg.table.tricks_won || [0, 0, 0, 0];
       renderSeats();
       seatStatus.textContent = msg.table.dealt
         ? "dealt"
@@ -76,6 +78,8 @@ function connect(name) {
       dealBtn.disabled = players.length === 0 || msg.table.dealt;
     } else if (msg.type === "deal") {
       seatStatus.textContent = "dealing...";
+      tricksWon = [0, 0, 0, 0];
+      renderSeats();
       clearPlayArea();
       animateDeal(msg).then(() => {
         setTimeout(() => {
@@ -85,6 +89,8 @@ function connect(name) {
       });
     } else if (msg.type === "play") {
       animatePlay(msg.seat, msg.card);
+    } else if (msg.type === "trick_won") {
+      handleTrickWon(msg.winner, msg.tricks_won);
     }
   });
 
@@ -127,7 +133,9 @@ function renderSeats() {
     const seatEl = tableEl.querySelector(`.seat.${pos}`);
     const p = players[i];
     seatEl.classList.toggle("you", i === mySeat);
-    seatEl.querySelector(".name").textContent = p ? p.name : "—";
+    const t = tricksWon[i] || 0;
+    const name = p ? p.name : "—";
+    seatEl.querySelector(".name").textContent = t > 0 ? `${name} · ${t}` : name;
   }
 }
 
@@ -250,6 +258,71 @@ function repackHand(seatPos) {
 }
 
 const PLAY_MS = 320;
+const TRICK_HOLD_MS = 900;     // how long the completed trick stays visible
+const TRICK_COLLECT_MS = 480;
+
+async function handleTrickWon(winnerSeat, newTricks) {
+  // Snapshot which cards are currently in each slot before they get cleared
+  const slotCards = [];
+  for (const slot of tableEl.querySelectorAll(".play-slot")) {
+    const card = slot.firstElementChild;
+    if (card) slotCards.push({ slot, card });
+  }
+  if (slotCards.length === 0) {
+    tricksWon = newTricks;
+    renderSeats();
+    return;
+  }
+
+  // Hold so the full trick reads
+  await new Promise((r) => setTimeout(r, TRICK_HOLD_MS));
+
+  const winnerPos = seatPosition(winnerSeat);
+  if (!winnerPos) {
+    // Nothing to animate toward — just clear and update
+    for (const { slot } of slotCards) slot.innerHTML = "";
+    tricksWon = newTricks;
+    renderSeats();
+    return;
+  }
+
+  const tableRect = tableEl.getBoundingClientRect();
+  const winnerEl = tableEl.querySelector(`.seat.${winnerPos}`);
+  const wRect = winnerEl.getBoundingClientRect();
+  const targetX = wRect.left - tableRect.left + wRect.width / 2 - 14;
+  const targetY = wRect.top - tableRect.top + wRect.height / 2 - 20;
+
+  const animations = [];
+  for (const { slot, card } of slotCards) {
+    const cardRect = card.getBoundingClientRect();
+    const startX = cardRect.left - tableRect.left;
+    const startY = cardRect.top - tableRect.top;
+    const fly = card.cloneNode(true);
+    fly.classList.add("flying");
+    fly.style.left = `${startX}px`;
+    fly.style.top = `${startY}px`;
+    fly.style.width = "var(--card-w)";
+    fly.style.height = "var(--card-h)";
+    tableEl.appendChild(fly);
+    slot.innerHTML = "";
+
+    const anim = fly.animate(
+      [
+        { transform: "translate(0,0) scale(1)", opacity: 1 },
+        {
+          transform: `translate(${targetX - startX}px, ${targetY - startY}px) scale(0.45)`,
+          opacity: 0.1,
+        },
+      ],
+      { duration: TRICK_COLLECT_MS, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" },
+    );
+    animations.push(anim.finished.then(() => fly.remove()).catch(() => fly.remove()));
+  }
+
+  await Promise.all(animations);
+  tricksWon = newTricks;
+  renderSeats();
+}
 
 function animatePlay(seatIdx, card) {
   const seatPos = seatPosition(seatIdx);
