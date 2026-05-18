@@ -318,6 +318,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 #bid-info .down { color: var(--red); font-weight: 600; }
 #bid-info .totals { color: var(--muted); font-size: 0.8rem; }
 
+#bid-history {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-top: 0.25rem;
+  min-height: 1em;
+  line-height: 1.4;
+}
+#bid-history .item { margin-right: 0.7rem; white-space: nowrap; }
+#bid-history .name { color: var(--fg); }
+
 #call-panel {
   display: flex;
   gap: 0.75rem;

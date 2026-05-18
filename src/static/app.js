@@ -10,6 +10,7 @@ const tableEl = document.getElementById("table");
 const deckEl = document.getElementById("deck");
 const bidArea = document.getElementById("bid-area");
 const bidInfo = document.getElementById("bid-info");
+const bidHistoryEl = document.getElementById("bid-history");
 const bidPanel = document.getElementById("bid-panel");
 const bidLevelSel = document.getElementById("bid-level");
 const bidStrainSel = document.getElementById("bid-strain");
@@ -107,6 +108,7 @@ function connect(name) {
       tricksWon = msg.table.tricks_won || [0, 0, 0, 0];
       renderSeats();   // arrow indicator depends on lastState; render after assignment
       renderPhase();
+      renderBidHistory();
     } else if (msg.type === "deal") {
       tricksWon = [0, 0, 0, 0];
       iAmPartner = false;
@@ -285,6 +287,27 @@ function flashStatusError(text) {
     renderPhase();
     statusErrorTimer = null;
   }, 2000);
+}
+
+function renderBidHistory() {
+  if (!lastState) { bidHistoryEl.innerHTML = ""; return; }
+  const history = lastState.bid_history || [];
+  // Hide auto-passes from empty seats — they clutter the history during
+  // solo/partial-table testing and don't add information.
+  const items = history.filter((e) => !e.auto).map((e) => {
+    const name = `<span class="name">${seatName(e.seat)}</span>`;
+    if (e.kind === "pass") return `<span class="item">${name}: pass</span>`;
+    if (e.kind === "stuck") {
+      const cls = STRAIN_CLASS[e.strain] || "";
+      return `<span class="item">${name}: stuck ${e.level}<span class="${cls}">${STRAIN_LABEL[e.strain]}</span></span>`;
+    }
+    if (e.kind === "bid") {
+      const cls = STRAIN_CLASS[e.strain] || "";
+      return `<span class="item">${name}: ${e.level}<span class="${cls}">${STRAIN_LABEL[e.strain]}</span></span>`;
+    }
+    return "";
+  });
+  bidHistoryEl.innerHTML = items.join("");
 }
 
 callSubmitBtn.addEventListener("click", () => {
