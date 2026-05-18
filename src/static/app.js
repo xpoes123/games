@@ -217,14 +217,14 @@ function renderPhase() {
     return;
   }
 
-  if (phase === "playing" || phase === "done") {
+  if (phase === "playing") {
     bidArea.hidden = false;
     bidPanel.hidden = true;
     callPanel.hidden = true;
     const contract = lastState.contract;
     const declarer = lastState.declarer;
     const partnerCard = lastState.partner_card;
-    seatStatus.textContent = phase === "playing" ? "playing" : "hand complete";
+    seatStatus.textContent = "playing";
     let info = `contract: <span class="current">${formatBid(contract)}</span> by ${seatName(declarer)}`;
     if (partnerCard) {
       const cls = STRAIN_CLASS[partnerCard.suit] || "";
@@ -232,7 +232,36 @@ function renderPhase() {
     }
     if (iAmPartner) info += ` · <span class="yours">you are partner</span>`;
     bidInfo.innerHTML = info;
-    dealBtn.disabled = phase !== "done";
+    dealBtn.disabled = true;
+    return;
+  }
+
+  if (phase === "done") {
+    bidArea.hidden = false;
+    bidPanel.hidden = true;
+    callPanel.hidden = true;
+    const contract = lastState.contract;
+    const declarer = lastState.declarer;
+    const partnerSeat = lastState.partner_seat;
+    const partnerCard = lastState.partner_card;
+    const result = lastState.result;
+    seatStatus.textContent = "hand complete";
+    let info = `<span class="current">${formatBid(contract)}</span> by ${seatName(declarer)}`;
+    if (partnerSeat !== null && partnerSeat !== undefined) {
+      info += ` & <span class="current">${seatName(partnerSeat)}</span>`;
+    }
+    if (partnerCard) {
+      const cls = STRAIN_CLASS[partnerCard.suit] || "";
+      info += ` (called ${partnerCard.rank}<span class="${cls}">${SUIT_GLYPH[partnerCard.suit]}</span>)`;
+    }
+    if (result) {
+      const verdict = result.made
+        ? `<span class="made">made ${result.delta === 0 ? "" : `+${result.delta}`}</span>`
+        : `<span class="down">down ${-result.delta}</span>`;
+      info += ` · ${verdict} (${result.team_tricks}/${result.target})`;
+    }
+    bidInfo.innerHTML = info;
+    dealBtn.disabled = false;
     return;
   }
 }

@@ -122,7 +122,7 @@ class Table:
     # ---- state ----
 
     def public_state(self) -> dict:
-        return {
+        state = {
             "players": [{"id": p.player_id, "name": p.name} for p in self.players],
             "capacity": MAX_PLAYERS,
             "phase": self.phase.value,
@@ -137,6 +137,24 @@ class Table:
             "tricks_won": list(self.tricks_won),
             "turn": self.turn,
             "trump_broken": self.trump_broken,
+        }
+        # Partnership becomes public at end-of-hand per the variant spec.
+        if self.phase == Phase.DONE:
+            state["partner_seat"] = self.partner_seat
+            state["result"] = self.compute_result()
+        return state
+
+    def compute_result(self) -> dict | None:
+        if self.contract is None or self.declarer is None or self.partner_seat is None:
+            return None
+        target = self.contract.level + 6
+        team_tricks = self.tricks_won[self.declarer] + self.tricks_won[self.partner_seat]
+        delta = team_tricks - target
+        return {
+            "target": target,
+            "team_tricks": team_tricks,
+            "made": team_tricks >= target,
+            "delta": delta,
         }
 
     # ---- transitions ----
