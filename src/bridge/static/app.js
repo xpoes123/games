@@ -62,20 +62,35 @@ function playTurnBeep() {
   try {
     const ctx = getAudioCtx();
     if (!ctx) return;
-    const tone = (freq, when, dur) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain).connect(ctx.destination);
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, ctx.currentTime + when);
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime + when);
-      gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + when + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + when + dur);
-      osc.start(ctx.currentTime + when);
-      osc.stop(ctx.currentTime + when + dur + 0.03);
+    const t0 = ctx.currentTime;
+
+    // Marimba-style pluck: sine fundamental + softer harmonics, sharp
+    // attack, exponential decay. Each harmonic decays faster than the
+    // fundamental so the tone gets "softer" toward the tail.
+    const pluck = (freq, when, dur) => {
+      const harmonics = [
+        { mult: 1, gain: 0.18, decay: dur },
+        { mult: 2, gain: 0.08, decay: dur * 0.55 },
+        { mult: 3, gain: 0.035, decay: dur * 0.35 },
+      ];
+      for (const h of harmonics) {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq * h.mult, t0 + when);
+        osc.connect(g).connect(ctx.destination);
+        g.gain.setValueAtTime(0.0001, t0 + when);
+        g.gain.exponentialRampToValueAtTime(h.gain, t0 + when + 0.006);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + when + h.decay);
+        osc.start(t0 + when);
+        osc.stop(t0 + when + h.decay + 0.05);
+      }
     };
-    tone(880, 0, 0.14);     // A5
-    tone(1175, 0.13, 0.18); // D6 — short two-tone chime
+
+    // Two-note ascending arpeggio, C5 → G5 (perfect fifth — feels calm,
+    // not alarming).
+    pluck(523.25, 0, 0.42);     // C5
+    pluck(783.99, 0.13, 0.55);  // G5
   } catch {
     // Ignore audio errors (autoplay policy, etc.)
   }
