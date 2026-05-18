@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.config import settings
-from src.rooms import MAX_PLAYERS, Player, registry
+from src.rooms import MAX_PLAYERS, Player, Room, registry
 
 log = logging.getLogger("games")
 
@@ -45,17 +45,48 @@ async def get_room(code: str) -> dict:
     return room.public_state()
 
 
-async def _broadcast(room, payload: dict) -> None:
-    dead: list[Player] = []
-    msg = json.dumps(payload)
-    for p in room.players:
-        try:
-            await p.socket.send_text(msg)
-        except Exception:
-            dead.append(p)
-    for p in dead:
-        if p in room.players:
-            room.players.remove(p)
+async def _send(player: Player, payload: dict) -> bool:
+    try:
+        await player.socket.send_text(json.dumps(payload))
+        return True
+    except Exception:
+        return False
+
+
+async def _broadcast(room: Room, payload: dict) -> None:
+    for p in list(room.players):
+        if not await _send(p, payload):
+            if p in room.players:
+                room.players.remove(p)
+
+
+async def _broadcast_state(room: Room) -> None:
+    await _broadcast(room, {"type": "state", "room": room.public_state()})
+
+
+async def _handle_deal(room: Room) -> None:
+    """Deal 13 cards to each seat. Each player sees only their own hand."""
+    async with room.lock:
+        if len(room.players) != MAX_PLAYERS:
+            return
+        room.deal()
+        snapshot_players = list(room.players)
+        hands = [list(h) for h in room.hands]
+        dealer = room.dealer
+
+    for seat, player in enumerate(snapshot_players):
+        view = []
+        for s in range(MAX_PLAYERS):
+            if s == seat:
+                view.append([c.to_json() for c in hands[s]])
+            else:
+                view.append([{"hidden": True} for _ in hands[s]])
+        await _send(player, {
+            "type": "deal",
+            "dealer": dealer,
+            "your_seat": seat,
+            "hands": view,
+        })
 
 
 @app.websocket("/ws/{code}")
@@ -67,8 +98,7 @@ async def room_socket(ws: WebSocket, code: str) -> None:
 
     await ws.accept()
     try:
-        hello_raw = await ws.receive_text()
-        hello = json.loads(hello_raw)
+        hello = json.loads(await ws.receive_text())
         name = (hello.get("name") or "Player").strip()[:24] or "Player"
     except Exception:
         await ws.close(code=4400, reason="bad hello")
@@ -80,8 +110,10 @@ async def room_socket(ws: WebSocket, code: str) -> None:
             return
         player = Player(player_id=secrets.token_hex(4), name=name, socket=ws)
         room.players.append(player)
+        seat = len(room.players) - 1
 
-    await _broadcast(room, {"type": "state", "room": room.public_state()})
+    await _send(player, {"type": "welcome", "your_seat": seat})
+    await _broadcast_state(room)
 
     try:
         while True:
@@ -90,19 +122,18 @@ async def room_socket(ws: WebSocket, code: str) -> None:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            # Echo-relay for now. Game logic gets added once we spec it.
-            await _broadcast(room, {
-                "type": "chat",
-                "from": player.name,
-                "body": msg.get("body", ""),
-            })
+            action = msg.get("type")
+            if action == "deal":
+                await _handle_deal(room)
     except WebSocketDisconnect:
         pass
     finally:
         async with room.lock:
             if player in room.players:
                 room.players.remove(player)
-        await _broadcast(room, {"type": "state", "room": room.public_state()})
+            # Reset deal state if anyone leaves mid-round
+            room.hands = []
+        await _broadcast_state(room)
         await registry.drop_if_empty(room.code)
 
 

@@ -26,15 +26,22 @@
 
     <section id="room" hidden>
       <div class="room-head">
-        <h2>room <span id="room-code"></span></h2>
-        <button id="leave-btn">leave</button>
+        <span>room <span id="room-code"></span></span>
+        <div class="actions">
+          <button id="deal-btn" disabled>deal</button>
+          <button id="leave-btn">leave</button>
+        </div>
       </div>
-      <ul id="players"></ul>
-      <div id="chat-log"></div>
-      <form id="chat-form" autocomplete="off">
-        <input id="chat-input" />
-        <button type="submit">send</button>
-      </form>
+
+      <div id="table">
+        <div class="seat bottom" data-pos="bottom"><div class="name"></div><div class="hand"></div></div>
+        <div class="seat left"   data-pos="left"><div class="name"></div><div class="hand"></div></div>
+        <div class="seat top"    data-pos="top"><div class="name"></div><div class="hand"></div></div>
+        <div class="seat right"  data-pos="right"><div class="name"></div><div class="hand"></div></div>
+        <div id="deck"></div>
+      </div>
+
+      <div id="room-status"></div>
     </section>
   </main>
   <script src="/static/app.js"></script>

@@ -6,6 +6,10 @@
   --border: #414868;
   --accent: #7aa2f7;
   --panel: #24283b;
+  --red: #f7768e;
+  --card-bg: #d5dbf2;
+  --card-fg: #1a1b26;
+  --back: #2f3650;
 }
 
 * { box-sizing: border-box; }
@@ -20,7 +24,7 @@ body {
 }
 
 main {
-  max-width: 640px;
+  max-width: 720px;
   margin: 0 auto;
   padding: 2rem 1rem;
 }
@@ -54,11 +58,7 @@ section {
   padding: 1rem;
 }
 
-label {
-  display: block;
-  margin-bottom: 0.5rem;
-  color: var(--muted);
-}
+label { display: block; margin-bottom: 0.5rem; color: var(--muted); }
 
 input {
   font: inherit;
@@ -81,45 +81,108 @@ button {
   color: var(--fg);
   border: 1px solid var(--border);
 }
-button:hover { border-color: var(--accent); color: var(--accent); }
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 #create-btn, #join-btn { width: 100%; margin-top: 0.25rem; }
+
+/* Room */
+
+#room { padding: 1rem; }
 
 .room-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 0.75rem;
-}
-.room-head h2 { margin: 0; color: var(--fg); }
-#room-code { color: var(--accent); }
-
-#players {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 0.75rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-}
-#players li {
-  padding: 0.15rem 0.5rem;
-  border: 1px solid var(--border);
   color: var(--muted);
 }
+#room-code { color: var(--accent); }
+.actions { display: flex; gap: 0.5rem; }
 
-#chat-log {
-  height: 200px;
-  overflow-y: auto;
-  background: var(--bg);
+#room-status { color: var(--muted); margin-top: 0.75rem; font-size: 0.85rem; min-height: 1.25em; }
+
+/* Table */
+
+#table {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #1f2335;
   border: 1px solid var(--border);
-  padding: 0.5rem;
-  margin-bottom: 0.5rem;
+  overflow: hidden;
 }
-#chat-log .line { margin: 0; }
-#chat-log .from { color: var(--accent); margin-right: 0.5rem; }
-#chat-log .system .from { color: var(--muted); }
-#chat-log .system { color: var(--muted); }
 
-#chat-form { display: flex; gap: 0.5rem; }
-#chat-form input { flex: 1; }
+#deck {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 42px;
+  height: 60px;
+  margin: -30px 0 0 -21px;
+  background: var(--back);
+  border: 1px solid var(--border);
+  box-shadow: 1px 1px 0 var(--border), 2px 2px 0 var(--border);
+}
+
+.seat {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.seat .name {
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.seat.you .name { color: var(--accent); }
+
+.seat .hand {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  min-height: 60px;
+}
+
+.seat.bottom { left: 50%; bottom: 8px;  transform: translateX(-50%); }
+.seat.top    { left: 50%; top: 8px;     transform: translateX(-50%); }
+.seat.left   { top: 50%;  left: 8px;    transform: translateY(-50%); }
+.seat.right  { top: 50%;  right: 8px;   transform: translateY(-50%); }
+
+.seat.left .hand, .seat.right .hand { flex-direction: column; min-height: 0; }
+
+/* Cards */
+
+.card {
+  width: 28px;
+  height: 40px;
+  border: 1px solid var(--border);
+  background: var(--back);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.seat.bottom .card { width: 32px; height: 46px; }
+
+.card.face {
+  background: var(--card-bg);
+  color: var(--card-fg);
+  line-height: 1;
+}
+.card.face.red { color: var(--red); }
+.card.face .rank { font-size: 0.85rem; }
+.card.face .suit { font-size: 0.9rem; }
+
+.card.flying {
+  position: absolute;
+  z-index: 5;
+}

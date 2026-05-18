@@ -7,6 +7,8 @@ import string
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from src.cards import Card, deal_four
+
 if TYPE_CHECKING:
     from fastapi import WebSocket
 
@@ -27,6 +29,8 @@ class Player:
 class Room:
     code: str
     players: list[Player] = field(default_factory=list)
+    hands: list[list[Card]] = field(default_factory=list)  # 4 × 13 once dealt
+    dealer: int = 0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def public_state(self) -> dict:
@@ -34,7 +38,11 @@ class Room:
             "code": self.code,
             "players": [{"id": p.player_id, "name": p.name} for p in self.players],
             "capacity": MAX_PLAYERS,
+            "dealt": bool(self.hands),
         }
+
+    def deal(self) -> None:
+        self.hands = deal_four()
 
 
 class RoomRegistry:
