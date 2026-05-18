@@ -77,7 +77,12 @@ function connect(name) {
       dealBtn.disabled = remaining > 0 || msg.table.dealt;
     } else if (msg.type === "deal") {
       seatStatus.textContent = "dealing...";
-      animateDeal(msg).then(() => { seatStatus.textContent = "dealt"; });
+      animateDeal(msg).then(() => {
+        setTimeout(() => {
+          sortMyHand();
+          seatStatus.textContent = "dealt";
+        }, SORT_DELAY);
+      });
     }
   });
 
@@ -142,9 +147,43 @@ function makeCardEl(card, faceUp) {
   if (faceUp && !card.hidden) {
     el.classList.add("face");
     if (RED_SUITS.has(card.suit)) el.classList.add("red");
+    el.dataset.rank = card.rank;
+    el.dataset.suit = card.suit;
     el.innerHTML = `<span class="rank">${card.rank}</span><span class="suit">${SUIT_GLYPH[card.suit]}</span>`;
   }
   return el;
+}
+
+const RANK_ORDER = { "2": 0, "3": 1, "4": 2, "5": 3, "6": 4, "7": 5, "8": 6, "9": 7, "T": 8, "J": 9, "Q": 10, "K": 11, "A": 12 };
+const SUIT_ORDER = { S: 0, H: 1, D: 2, C: 3 };
+const MY_STRIDE = 22;
+const SORT_MS = 380;
+const SORT_DELAY = 300;     // beat after dealing before the resort kicks in
+const SORT_STAGGER = 18;    // stagger per card so the resort feels alive
+
+function sortMyHand() {
+  const handEl = document.querySelector(".seat.bottom .hand");
+  const cards = [...handEl.children];
+  cards.sort((a, b) => {
+    const sa = SUIT_ORDER[a.dataset.suit];
+    const sb = SUIT_ORDER[b.dataset.suit];
+    if (sa !== sb) return sa - sb;
+    return RANK_ORDER[b.dataset.rank] - RANK_ORDER[a.dataset.rank]; // A high → descending
+  });
+  cards.forEach((card, newIdx) => {
+    const newLeft = newIdx * MY_STRIDE;
+    const oldLeft = parseFloat(card.style.left) || 0;
+    card.style.left = `${newLeft}px`;
+    card.style.zIndex = String(newIdx); // later suits sit on top of earlier
+    if (oldLeft === newLeft) return;
+    card.animate(
+      [
+        { transform: `translateX(${oldLeft - newLeft}px)` },
+        { transform: "translateX(0)" },
+      ],
+      { duration: SORT_MS, easing: "cubic-bezier(.2,.7,.2,1)", delay: newIdx * SORT_STAGGER },
+    );
+  });
 }
 
 async function animateDeal({ dealer, your_seat, hands }) {
