@@ -1,13 +1,13 @@
-"""Single in-process table — rooms removed for now.
+"""Single in-process table with phase-based game state.
 
-If we ever need multiple concurrent games, swap this for a registry keyed by
-some join code or game type. For now: one table, one game, share the URL.
+Phases: LOBBY → BIDDING → CALLING → PLAYING → DONE.
 """
 from __future__ import annotations
 
 import asyncio
 import secrets
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from src.cards import Card, deal_four
@@ -23,17 +23,65 @@ RANK_VALUE = {
     "9": 9, "T": 10, "J": 11, "Q": 12, "K": 13, "A": 14,
 }
 
+# Strain order: NT is the LEAST-prioritized strain in this variant, then clubs
+# up to spades. Within a level, 1NT < 1C < 1D < 1H < 1S < 2NT < ...
+STRAIN_RANK = {"NT": 0, "C": 1, "D": 2, "H": 3, "S": 4}
+STRAINS = list(STRAIN_RANK.keys())
 
-def evaluate_trick(plays: list[tuple[int, Card]]) -> int:
-    """Highest card of the led suit wins. No trump for now."""
+
+def bid_value(level: int, strain: str) -> int:
+    return level * 5 + STRAIN_RANK[strain]
+
+
+class Phase(str, Enum):
+    LOBBY = "lobby"
+    BIDDING = "bidding"
+    CALLING = "calling"
+    PLAYING = "playing"
+    DONE = "done"
+
+
+@dataclass
+class Bid:
+    seat: int
+    level: int
+    strain: str
+
+    @property
+    def value(self) -> int:
+        return bid_value(self.level, self.strain)
+
+    def to_json(self) -> dict:
+        return {"seat": self.seat, "level": self.level, "strain": self.strain}
+
+
+def evaluate_trick(plays: list[tuple[int, Card]], trump: str | None) -> int:
+    """Trump beats off-suit. Among same trump-status, highest of led suit wins."""
     led_suit = plays[0][1].suit
     winner_seat = plays[0][0]
-    winner_value = RANK_VALUE[plays[0][1].rank]
+    winner_card = plays[0][1]
     for seat, card in plays[1:]:
-        if card.suit == led_suit and RANK_VALUE[card.rank] > winner_value:
+        if _beats(card, winner_card, led_suit, trump):
             winner_seat = seat
-            winner_value = RANK_VALUE[card.rank]
+            winner_card = card
     return winner_seat
+
+
+def _beats(card: Card, current: Card, led: str, trump: str | None) -> bool:
+    card_trump = trump is not None and card.suit == trump
+    cur_trump = trump is not None and current.suit == trump
+    if card_trump and not cur_trump:
+        return True
+    if cur_trump and not card_trump:
+        return False
+    if card_trump and cur_trump:
+        return RANK_VALUE[card.rank] > RANK_VALUE[current.rank]
+    # Both non-trump
+    if card.suit != led:
+        return False
+    if current.suit != led:
+        return True
+    return RANK_VALUE[card.rank] > RANK_VALUE[current.rank]
 
 
 @dataclass
@@ -47,48 +95,230 @@ class Player:
 class Table:
     players: list[Player] = field(default_factory=list)
     hands: list[list[Card]] = field(default_factory=list)
+
+    phase: Phase = Phase.LOBBY
+    dealer: int = 0
+
+    # Bidding
+    current_bidder: int | None = None
+    passed: set[int] = field(default_factory=set)
+    current_bid: Bid | None = None
+    bid_history: list[dict] = field(default_factory=list)
+
+    # Contract / partnership
+    declarer: int | None = None
+    contract: Bid | None = None
+    partner_card: Card | None = None
+    partner_seat: int | None = None
+
+    # Play
     current_trick: list[tuple[int, Card]] = field(default_factory=list)
     tricks_won: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
-    dealer: int = 0
+    turn: int | None = None
+    trump_broken: bool = False
+
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    # ---- state ----
 
     def public_state(self) -> dict:
         return {
             "players": [{"id": p.player_id, "name": p.name} for p in self.players],
             "capacity": MAX_PLAYERS,
-            "dealt": bool(self.hands),
+            "phase": self.phase.value,
+            "dealer": self.dealer,
+            "current_bidder": self.current_bidder,
+            "current_bid": self.current_bid.to_json() if self.current_bid else None,
+            "bid_history": list(self.bid_history),
+            "passed": sorted(self.passed),
+            "declarer": self.declarer,
+            "contract": self.contract.to_json() if self.contract else None,
+            "partner_card": self.partner_card.to_json() if self.partner_card else None,
             "tricks_won": list(self.tricks_won),
+            "turn": self.turn,
+            "trump_broken": self.trump_broken,
         }
+
+    # ---- transitions ----
 
     def deal(self) -> None:
         self.hands = deal_four()
+        self.phase = Phase.BIDDING
+        self.passed = set()
+        self.current_bid = None
+        self.bid_history = []
+        self.current_bidder = self.dealer
+        self.declarer = None
+        self.contract = None
+        self.partner_card = None
+        self.partner_seat = None
         self.current_trick = []
         self.tricks_won = [0, 0, 0, 0]
+        self.turn = None
+        self.trump_broken = False
+        # Auto-pass any empty seats before the dealer slot would even start.
+        # If the dealer's seat itself is empty, that's a misconfiguration —
+        # callers should ensure dealer is a real seat. We don't auto-pass the
+        # dealer because the dealer is forced to open.
 
     def reset(self) -> None:
         self.hands = []
+        self.phase = Phase.LOBBY
+        self.passed = set()
+        self.current_bid = None
+        self.bid_history = []
+        self.current_bidder = None
+        self.declarer = None
+        self.contract = None
+        self.partner_card = None
+        self.partner_seat = None
         self.current_trick = []
         self.tricks_won = [0, 0, 0, 0]
+        self.turn = None
+        self.trump_broken = False
+
+    # ---- bidding ----
+
+    def submit_pass(self, seat: int) -> str | None:
+        if self.phase != Phase.BIDDING:
+            return "not in bidding phase"
+        if seat != self.current_bidder:
+            return "not your turn"
+        if seat == self.dealer and self.current_bid is None:
+            return "dealer must open"
+        self.passed.add(seat)
+        self.bid_history.append({"kind": "pass", "seat": seat})
+        self._advance_bidder()
+        return None
+
+    def submit_bid(self, seat: int, level: int, strain: str) -> str | None:
+        if self.phase != Phase.BIDDING:
+            return "not in bidding phase"
+        if seat != self.current_bidder:
+            return "not your turn"
+        if strain not in STRAIN_RANK:
+            return "invalid strain"
+        if not (1 <= level <= 7):
+            return "invalid level"
+        new_bid = Bid(seat=seat, level=level, strain=strain)
+        if self.current_bid is not None and new_bid.value <= self.current_bid.value:
+            return "must outbid current"
+        self.current_bid = new_bid
+        self.bid_history.append({"kind": "bid", "seat": seat, "level": level, "strain": strain})
+        self._advance_bidder()
+        return None
+
+    def _advance_bidder(self) -> None:
+        # Auto-pass for empty seats so solo testing works. Empty = seat index
+        # outside the players list. Loop until we land on a live human bidder
+        # or bidding ends.
+        while True:
+            if self._end_bidding_if_done():
+                return
+            cur = self.current_bidder
+            for _ in range(4):
+                cur = (cur + 1) % 4
+                if cur not in self.passed:
+                    self.current_bidder = cur
+                    break
+            else:
+                return  # all seats passed (shouldn't happen given dealer-open rule)
+            # If this seat has no player, auto-pass it
+            if self.current_bidder >= len(self.players):
+                self.passed.add(self.current_bidder)
+                self.bid_history.append({
+                    "kind": "pass", "seat": self.current_bidder, "auto": True,
+                })
+                continue
+            return  # human bidder's turn
+
+    def _end_bidding_if_done(self) -> bool:
+        if len(self.passed) < 3:
+            return False
+        # The single non-passed seat is the declarer (if there was any bid)
+        for s in range(4):
+            if s not in self.passed:
+                self.declarer = s
+                self.contract = self.current_bid
+                break
+        self.phase = Phase.CALLING
+        self.current_bidder = None
+        return True
+
+    # ---- calling ----
+
+    def submit_call_partner(self, seat: int, rank: str, suit: str) -> str | None:
+        if self.phase != Phase.CALLING:
+            return "not in calling phase"
+        if seat != self.declarer:
+            return "only declarer can call"
+        if rank not in RANK_VALUE or suit not in {"S", "H", "D", "C"}:
+            return "invalid card"
+        # Can't call a card you already hold
+        if any(c.rank == rank and c.suit == suit for c in self.hands[seat]):
+            return "you hold that card"
+        # Find the holder
+        holder = None
+        for s, hand in enumerate(self.hands):
+            if any(c.rank == rank and c.suit == suit for c in hand):
+                holder = s
+                break
+        if holder is None:
+            return "no one holds that card"
+        self.partner_card = Card(rank, suit)
+        self.partner_seat = holder
+        self.phase = Phase.PLAYING
+        # Opening lead: NT → right of declarer; else declarer leads
+        if self.contract is not None and self.contract.strain == "NT":
+            self.turn = (self.declarer - 1) % 4
+        else:
+            self.turn = self.declarer
+        return None
+
+    # ---- play ----
 
     def play_card(self, seat: int, rank: str, suit: str) -> Card | None:
+        if self.phase != Phase.PLAYING:
+            return None
+        if seat != self.turn:
+            return None
         if seat < 0 or seat >= len(self.hands):
             return None
         hand = self.hands[seat]
-        for i, c in enumerate(hand):
+        card = None
+        for c in hand:
             if c.rank == rank and c.suit == suit:
-                hand.pop(i)
-                self.current_trick.append((seat, c))
-                return c
-        return None
+                card = c
+                break
+        if card is None:
+            return None
+        hand.remove(card)
+        self.current_trick.append((seat, card))
+        # Trump breaks when someone plays trump on a non-trump led trick
+        trump = self.contract.strain if self.contract and self.contract.strain != "NT" else None
+        if trump and len(self.current_trick) > 1:
+            led_suit = self.current_trick[0][1].suit
+            if led_suit != trump and card.suit == trump:
+                self.trump_broken = True
+        # Advance turn — trick resolution may overwrite this
+        if len(self.current_trick) < 4:
+            self.turn = (seat + 1) % 4
+        return card
 
     def resolve_trick_if_complete(self) -> int | None:
-        """If 4 cards are in the current trick, evaluate, score it, clear."""
         if len(self.current_trick) != 4:
             return None
-        winner = evaluate_trick(self.current_trick)
+        trump = self.contract.strain if self.contract and self.contract.strain != "NT" else None
+        winner = evaluate_trick(self.current_trick, trump)
         self.tricks_won[winner] += 1
         self.current_trick = []
+        self.turn = winner
+        if sum(self.tricks_won) >= 13:
+            self.phase = Phase.DONE
+            self.turn = None
         return winner
+
+    # ---- player management ----
 
     async def add_player(self, name: str, ws: "WebSocket") -> Player | None:
         async with self.lock:
