@@ -199,3 +199,13 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .card.face .suit { font-size: 1rem; }
 
 .card.flying { z-index: 10; pointer-events: none; }
+
+.seat.bottom .card.face {
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+.seat.bottom .card.face:hover {
+  transform: translateY(-10px);
+  z-index: 100;
+  border-color: var(--accent);
+}

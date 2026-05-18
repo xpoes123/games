@@ -51,7 +51,9 @@ async def _broadcast_state(t: Table) -> None:
 
 async def _handle_deal(t: Table) -> None:
     async with t.lock:
-        if len(t.players) != MAX_PLAYERS:
+        # TODO: tighten back to `!= MAX_PLAYERS` once the game logic is in.
+        # Permissive for now so we can test the deal/animation alone.
+        if len(t.players) < 1:
             return
         t.deal()
         snapshot_players = list(t.players)

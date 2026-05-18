@@ -70,11 +70,10 @@ function connect(name) {
     } else if (msg.type === "state") {
       players = msg.table.players;
       renderSeats();
-      const remaining = 4 - players.length;
-      seatStatus.textContent = remaining > 0
-        ? `waiting for ${remaining} more player${remaining === 1 ? "" : "s"}...`
-        : msg.table.dealt ? "dealt" : "ready to deal";
-      dealBtn.disabled = remaining > 0 || msg.table.dealt;
+      seatStatus.textContent = msg.table.dealt
+        ? "dealt"
+        : `${players.length}/4 seated`;
+      dealBtn.disabled = players.length === 0 || msg.table.dealt;
     } else if (msg.type === "deal") {
       seatStatus.textContent = "dealing...";
       animateDeal(msg).then(() => {
