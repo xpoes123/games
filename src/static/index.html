@@ -3,52 +3,39 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>games.djiang.xyz</title>
+  <title>games</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <main>
-    <header class="hero">
-      <h1>games</h1>
-      <p class="tagline">bridge variant for 4 · testing</p>
-    </header>
+    <h1>games</h1>
 
-    <div id="lobby" class="cards">
-      <section class="card">
-        <h2>New room</h2>
-        <p class="hint">Spin up a fresh table. You'll get a 4-letter code to share.</p>
-        <button id="create-btn" class="primary block">Create room</button>
+    <div id="lobby">
+      <section>
+        <h2>new room</h2>
+        <button id="create-btn">create</button>
       </section>
 
-      <section class="card">
-        <h2>Join room</h2>
-        <p class="hint">Have a code from a friend? Drop in.</p>
-        <label class="field">
-          <span>Room code</span>
-          <input id="join-code" maxlength="4" placeholder="ABCD" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>Your name</span>
-          <input id="player-name" maxlength="24" placeholder="anonymous" autocomplete="off" />
-        </label>
-        <button id="join-btn" class="primary block">Join</button>
+      <section>
+        <h2>join room</h2>
+        <label>code <input id="join-code" maxlength="4" autocomplete="off" /></label>
+        <label>name <input id="player-name" maxlength="24" autocomplete="off" /></label>
+        <button id="join-btn">join</button>
       </section>
     </div>
 
-    <section id="room" class="card" hidden>
-      <header class="room-head">
-        <h2>Room <span id="room-code"></span></h2>
-        <button id="leave-btn" class="ghost">Leave</button>
-      </header>
+    <section id="room" hidden>
+      <div class="room-head">
+        <h2>room <span id="room-code"></span></h2>
+        <button id="leave-btn">leave</button>
+      </div>
       <ul id="players"></ul>
       <div id="chat-log"></div>
       <form id="chat-form" autocomplete="off">
-        <input id="chat-input" placeholder="say something" />
-        <button type="submit" class="primary">Send</button>
+        <input id="chat-input" />
+        <button type="submit">send</button>
       </form>
     </section>
-
-    <footer>games.djiang.xyz</footer>
   </main>
   <script src="/static/app.js"></script>
 </body>
