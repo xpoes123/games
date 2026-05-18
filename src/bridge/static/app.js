@@ -83,8 +83,8 @@ function playTurnBeep() {
       osc.stop(t0 + 1.3);
     };
 
-    layer(440.00, 0.09);  // A4 — primary
-    layer(220.00, 0.025); // A3 — subtle octave below for warmth
+    layer(440.00, 0.035);  // A4 — primary
+    layer(220.00, 0.01);   // A3 — subtle octave below for warmth
   } catch {
     // Ignore audio errors (autoplay policy, etc.)
   }
