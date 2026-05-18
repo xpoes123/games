@@ -23,13 +23,43 @@ def _seat_table(n: int) -> Table:
     return t
 
 
-def test_dealer_cannot_pass_round_one():
+def test_dealer_may_pass_round_one():
     t = _seat_table(4)
     t.deal()
     assert t.phase == Phase.BIDDING
     assert t.current_bidder == t.dealer
     err = t.submit_pass(t.dealer)
-    assert err == "dealer must open"
+    assert err is None  # no longer forced to open
+
+
+def test_stick_the_dealer_when_all_pass():
+    t = _seat_table(4)
+    t.deal()
+    dealer = t.dealer
+    assert t.submit_pass(0) is None
+    assert t.submit_pass(1) is None
+    assert t.submit_pass(2) is None
+    assert t.submit_pass(3) is None
+    # Dealer gets stuck with the minimum bid (1NT)
+    assert t.phase == Phase.CALLING
+    assert t.declarer == dealer
+    assert t.contract is not None
+    assert t.contract.level == 1 and t.contract.strain == "NT"
+    # History records the stuck event
+    assert any(e["kind"] == "stuck" for e in t.bid_history)
+
+
+def test_last_live_seat_can_still_bid_after_three_passes():
+    """3 passes + no bid: bidding does NOT end. Last live seat can bid."""
+    t = _seat_table(4)
+    t.deal()
+    t.submit_pass(0); t.submit_pass(1); t.submit_pass(2)
+    assert t.phase == Phase.BIDDING  # not ended yet
+    assert t.current_bidder == 3
+    assert t.submit_bid(3, 1, "H") is None
+    assert t.phase == Phase.CALLING
+    assert t.declarer == 3
+    assert t.contract.level == 1 and t.contract.strain == "H"
 
 
 def test_solo_bidder_auto_pass_to_declarer():

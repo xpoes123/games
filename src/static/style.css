@@ -11,6 +11,13 @@
   --card-fg: #1a1b26;
   --back: #2f3650;
 
+  /* 4-color deck. Tuned so each suit reads at a glance on both the light
+     card face (#d5dbf2) and the dark panel/bid-info background (#24283b). */
+  --suit-spades:   #1a1b26;  /* dark on card; overridden lighter on dark bg */
+  --suit-hearts:   #d6435e;
+  --suit-diamonds: #3d6dd9;
+  --suit-clubs:    #2f9a44;
+
   --card-w: 28px;
   --card-h: 40px;
   --my-card-w: 36px;
@@ -194,7 +201,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--card-fg);
   line-height: 1;
 }
-.card.face.red { color: var(--red); }
+.card.face[data-suit="S"] { color: var(--suit-spades); }
+.card.face[data-suit="H"] { color: var(--suit-hearts); }
+.card.face[data-suit="D"] { color: var(--suit-diamonds); }
+.card.face[data-suit="C"] { color: var(--suit-clubs); }
 .card.face .rank { font-size: 0.9rem; }
 .card.face .suit { font-size: 1rem; }
 
@@ -290,3 +300,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   flex-basis: 100%;
   min-height: 1em;
 }
+
+/* Suit glyphs in the bid info line / dark contexts — use the same hue but
+   nudged lighter so it stays visible on the dark panel background. */
+.strain-S { color: var(--fg); }
+.strain-H { color: #f5687f; }
+.strain-D { color: #6f95e6; }
+.strain-C { color: #62b873; }
+.strain-NT { color: var(--fg); }

@@ -18,7 +18,6 @@ const bidPassBtn = document.getElementById("bid-pass");
 const bidError = document.getElementById("bid-error");
 
 const SUIT_GLYPH = { S: "♠", H: "♥", D: "♦", C: "♣" };
-const RED_SUITS = new Set(["H", "D"]);
 const POSITIONS = ["bottom", "left", "top", "right"];
 const ROUND_DELAY = 65;
 const FLIGHT_MS = 280;
@@ -30,7 +29,9 @@ let tricksWon = [0, 0, 0, 0];
 let lastState = null;
 
 const STRAIN_LABEL = { NT: "NT", C: "♣", D: "♦", H: "♥", S: "♠" };
-const STRAIN_CLASS = { H: "red", D: "red" };
+const STRAIN_CLASS = {
+  NT: "strain-NT", S: "strain-S", H: "strain-H", D: "strain-D", C: "strain-C",
+};
 
 function setStatus(msg) { entryStatus.textContent = msg; }
 
@@ -140,8 +141,8 @@ function resetSeats() {
 
 function formatBid(bid) {
   if (!bid) return "—";
-  const cls = STRAIN_CLASS[bid.strain] ? ` class="${STRAIN_CLASS[bid.strain]}"` : "";
-  return `${bid.level}<span${cls}>${STRAIN_LABEL[bid.strain]}</span>`;
+  const cls = STRAIN_CLASS[bid.strain] || "";
+  return `${bid.level}<span class="${cls}">${STRAIN_LABEL[bid.strain]}</span>`;
 }
 
 function seatName(idx) {
@@ -174,10 +175,7 @@ function renderPhase() {
     seatStatus.textContent = `bidding · ${youTurn ? "your turn" : bidder + "'s turn"}`;
     bidInfo.innerHTML = `${youTag}${curTag}`;
     bidPanel.hidden = !youTurn;
-    if (youTurn) {
-      const isDealerFirstAction = mySeat === lastState.dealer && curBid === null;
-      bidPassBtn.disabled = isDealerFirstAction;
-    }
+    if (youTurn) bidPassBtn.disabled = false;
     return;
   }
 
@@ -253,7 +251,6 @@ function makeCardEl(card, faceUp) {
   el.className = "card";
   if (faceUp && !card.hidden) {
     el.classList.add("face");
-    if (RED_SUITS.has(card.suit)) el.classList.add("red");
     el.dataset.rank = card.rank;
     el.dataset.suit = card.suit;
     el.innerHTML = `<span class="rank">${card.rank}</span><span class="suit">${SUIT_GLYPH[card.suit]}</span>`;

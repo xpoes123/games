@@ -184,8 +184,8 @@ class Table:
             return "not in bidding phase"
         if seat != self.current_bidder:
             return "not your turn"
-        if seat == self.dealer and self.current_bid is None:
-            return "dealer must open"
+        # No dealer-must-open rule — if all 4 pass with no bid, the dealer
+        # gets "stuck" with 1NT in _end_bidding_if_done.
         self.passed.add(seat)
         self.bid_history.append({"kind": "pass", "seat": seat})
         self._advance_bidder()
@@ -233,17 +233,28 @@ class Table:
             return  # human bidder's turn
 
     def _end_bidding_if_done(self) -> bool:
-        if len(self.passed) < 3:
-            return False
-        # The single non-passed seat is the declarer (if there was any bid)
-        for s in range(4):
-            if s not in self.passed:
-                self.declarer = s
+        # Normal end: 3 players have passed AND someone made a bid. The single
+        # remaining live seat wins with the current bid.
+        if len(self.passed) >= 3 and self.current_bid is not None:
+            live = [s for s in range(4) if s not in self.passed]
+            if len(live) == 1:
+                self.declarer = live[0]
                 self.contract = self.current_bid
-                break
-        self.phase = Phase.CALLING
-        self.current_bidder = None
-        return True
+                self.phase = Phase.CALLING
+                self.current_bidder = None
+                return True
+        # Stick-the-dealer: all 4 passed without any bid → dealer forced
+        # into the minimum contract (1NT, the least-priority strain).
+        if len(self.passed) == 4 and self.current_bid is None:
+            self.declarer = self.dealer
+            self.contract = Bid(seat=self.dealer, level=1, strain="NT")
+            self.bid_history.append({
+                "kind": "stuck", "seat": self.dealer, "level": 1, "strain": "NT",
+            })
+            self.phase = Phase.CALLING
+            self.current_bidder = None
+            return True
+        return False
 
     # ---- calling ----
 
