@@ -16,10 +16,23 @@ infra is up). Anonymous play via 4-letter room codes; no accounts.
 ```bash
 python -m venv venv
 source venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"
+playwright install chromium    # one-time, for UI self-verification
 python -m src.main
 # open http://127.0.0.1:7781
 ```
+
+## UI self-verification (Playwright)
+
+After making frontend changes, snapshot the local server and inspect the PNG:
+
+```bash
+./venv/bin/python -m src.main &
+./venv/bin/python scripts/preview.py        # → /tmp/games-preview.png
+```
+
+The helper takes a URL + output path as optional positional args. Used during
+iteration so I don't have to ask David to screenshot every change.
 
 ## Deploy
 Lives at `/opt/games` on the Hetzner VPS (87.99.136.82), systemd unit
