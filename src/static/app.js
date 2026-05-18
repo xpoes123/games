@@ -16,6 +16,11 @@ const bidStrainSel = document.getElementById("bid-strain");
 const bidSubmitBtn = document.getElementById("bid-submit");
 const bidPassBtn = document.getElementById("bid-pass");
 const bidError = document.getElementById("bid-error");
+const callPanel = document.getElementById("call-panel");
+const callRankSel = document.getElementById("call-rank");
+const callSuitSel = document.getElementById("call-suit");
+const callSubmitBtn = document.getElementById("call-submit");
+const callError = document.getElementById("call-error");
 
 const SUIT_GLYPH = { S: "♠", H: "♥", D: "♦", C: "♣" };
 const POSITIONS = ["bottom", "left", "top", "right"];
@@ -27,6 +32,7 @@ let mySeat = null;
 let players = [];
 let tricksWon = [0, 0, 0, 0];
 let lastState = null;
+let iAmPartner = false;   // private: true if server told me I'm the partner
 
 const STRAIN_LABEL = { NT: "NT", C: "♣", D: "♦", H: "♥", S: "♠" };
 const STRAIN_CLASS = {
@@ -82,7 +88,17 @@ function connect(name) {
     if (msg.type === "welcome") {
       mySeat = msg.your_seat;
     } else if (msg.type === "error") {
-      bidError.textContent = msg.message || "error";
+      const text = msg.message || "error";
+      // Route the error into whichever panel is currently visible
+      if (!callPanel.hidden) callError.textContent = text;
+      else bidError.textContent = text;
+    } else if (msg.type === "you_are_partner") {
+      iAmPartner = true;
+      renderPhase();
+    } else if (msg.type === "partner_called") {
+      // The state broadcast that follows will carry partner_card; nothing
+      // extra to do here for opponents. Hook left for a future "card called"
+      // animation if we want one.
     } else if (msg.type === "state") {
       lastState = msg.table;
       players = msg.table.players;
@@ -91,6 +107,7 @@ function connect(name) {
       renderPhase();
     } else if (msg.type === "deal") {
       tricksWon = [0, 0, 0, 0];
+      iAmPartner = false;
       renderSeats();
       clearPlayArea();
       animateDeal(msg).then(() => {
@@ -128,6 +145,7 @@ function resetSeats() {
   mySeat = null;
   players = [];
   lastState = null;
+  iAmPartner = false;
   for (const seat of document.querySelectorAll(".seat")) {
     seat.querySelector(".name").textContent = "";
     seat.querySelector(".hand").innerHTML = "";
@@ -136,7 +154,9 @@ function resetSeats() {
   for (const c of tableEl.querySelectorAll(".card.flying")) c.remove();
   bidArea.hidden = true;
   bidPanel.hidden = true;
+  callPanel.hidden = true;
   bidError.textContent = "";
+  callError.textContent = "";
 }
 
 function formatBid(bid) {
@@ -185,22 +205,43 @@ function renderPhase() {
     bidPanel.hidden = true;
     const contract = lastState.contract;
     const declarer = lastState.declarer;
+    const isDeclarer = mySeat === declarer;
     seatStatus.textContent = "calling partner";
-    bidInfo.innerHTML = `contract: <span class="current">${formatBid(contract)}</span> by ${seatName(declarer)} · waiting for partner call...`;
+    bidInfo.innerHTML = isDeclarer
+      ? `contract: <span class="current">${formatBid(contract)}</span> · call a card you don't hold`
+      : `contract: <span class="current">${formatBid(contract)}</span> by ${seatName(declarer)} · waiting for partner call...`;
+    callPanel.hidden = !isDeclarer;
+    callError.textContent = "";
     return;
   }
 
   if (phase === "playing" || phase === "done") {
     bidArea.hidden = false;
     bidPanel.hidden = true;
+    callPanel.hidden = true;
     const contract = lastState.contract;
     const declarer = lastState.declarer;
+    const partnerCard = lastState.partner_card;
     seatStatus.textContent = phase === "playing" ? "playing" : "hand complete";
-    bidInfo.innerHTML = `contract: <span class="current">${formatBid(contract)}</span> by ${seatName(declarer)}`;
+    let info = `contract: <span class="current">${formatBid(contract)}</span> by ${seatName(declarer)}`;
+    if (partnerCard) {
+      const cls = STRAIN_CLASS[partnerCard.suit] || "";
+      info += ` · partner card: ${partnerCard.rank}<span class="${cls}">${SUIT_GLYPH[partnerCard.suit]}</span>`;
+    }
+    if (iAmPartner) info += ` · <span class="yours">you are partner</span>`;
+    bidInfo.innerHTML = info;
     dealBtn.disabled = phase !== "done";
     return;
   }
 }
+
+callSubmitBtn.addEventListener("click", () => {
+  if (!ws || ws.readyState !== 1) return;
+  callError.textContent = "";
+  const rank = callRankSel.value;
+  const suit = callSuitSel.value;
+  ws.send(JSON.stringify({ type: "call_partner", rank, suit }));
+});
 
 bidSubmitBtn.addEventListener("click", () => {
   if (!ws || ws.readyState !== 1) return;
