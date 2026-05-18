@@ -288,33 +288,51 @@ class Table:
 
     # ---- play ----
 
-    def play_card(self, seat: int, rank: str, suit: str) -> Card | None:
+    def play_card(self, seat: int, rank: str, suit: str) -> tuple[Card | None, str | None]:
+        """Attempt to play a card. Returns (card, None) on success or
+        (None, error_string) on rule violation."""
         if self.phase != Phase.PLAYING:
-            return None
+            return None, "not in playing phase"
         if seat != self.turn:
-            return None
+            return None, "not your turn"
         if seat < 0 or seat >= len(self.hands):
-            return None
+            return None, "invalid seat"
         hand = self.hands[seat]
-        card = None
+        target = None
         for c in hand:
             if c.rank == rank and c.suit == suit:
-                card = c
+                target = c
                 break
-        if card is None:
-            return None
-        hand.remove(card)
-        self.current_trick.append((seat, card))
-        # Trump breaks when someone plays trump on a non-trump led trick
+        if target is None:
+            return None, "you don't hold that card"
+
         trump = self.contract.strain if self.contract and self.contract.strain != "NT" else None
-        if trump and len(self.current_trick) > 1:
+
+        if not self.current_trick:
+            # Leading: can't lead trump until it's been broken, unless your
+            # hand contains nothing but trump.
+            if trump is not None and target.suit == trump and not self.trump_broken:
+                if any(c.suit != trump for c in hand):
+                    return None, "trump not broken — can't lead trump yet"
+        else:
+            # Following: must play led suit if you have any.
             led_suit = self.current_trick[0][1].suit
-            if led_suit != trump and card.suit == trump:
+            if target.suit != led_suit and any(c.suit == led_suit for c in hand):
+                suit_name = {"S": "spades", "H": "hearts", "D": "diamonds", "C": "clubs"}[led_suit]
+                return None, f"must follow {suit_name}"
+
+        # Legal — commit
+        hand.remove(target)
+        self.current_trick.append((seat, target))
+        # Trump break detection: trump played on a non-trump-led trick.
+        if trump is not None and len(self.current_trick) > 1:
+            led_suit = self.current_trick[0][1].suit
+            if led_suit != trump and target.suit == trump:
                 self.trump_broken = True
-        # Advance turn — trick resolution may overwrite this
+        # Advance turn (overwritten by resolve_trick_if_complete when 4th lands)
         if len(self.current_trick) < 4:
             self.turn = (seat + 1) % 4
-        return card
+        return target, None
 
     def resolve_trick_if_complete(self) -> int | None:
         if len(self.current_trick) != 4:

@@ -155,8 +155,9 @@ async def _handle_play(t: Table, player: Player, msg: dict) -> None:
         seat = t.seat_of(player)
         if seat is None:
             return
-        card = t.play_card(seat, rank, suit)
+        card, err = t.play_card(seat, rank, suit)
         if card is None:
+            await _send(player, {"type": "error", "message": err or "illegal play"})
             return
         winner = t.resolve_trick_if_complete()
         tricks_snapshot = list(t.tricks_won)

@@ -89,9 +89,11 @@ function connect(name) {
       mySeat = msg.your_seat;
     } else if (msg.type === "error") {
       const text = msg.message || "error";
-      // Route the error into whichever panel is currently visible
+      // Route the error into whichever panel is currently visible. During
+      // PLAYING phase neither panel is visible — flash the status line.
       if (!callPanel.hidden) callError.textContent = text;
-      else bidError.textContent = text;
+      else if (!bidPanel.hidden) bidError.textContent = text;
+      else flashStatusError(text);
     } else if (msg.type === "you_are_partner") {
       iAmPartner = true;
       renderPhase();
@@ -233,6 +235,18 @@ function renderPhase() {
     dealBtn.disabled = phase !== "done";
     return;
   }
+}
+
+let statusErrorTimer = null;
+function flashStatusError(text) {
+  seatStatus.textContent = text;
+  seatStatus.classList.add("err");
+  if (statusErrorTimer) clearTimeout(statusErrorTimer);
+  statusErrorTimer = setTimeout(() => {
+    seatStatus.classList.remove("err");
+    renderPhase();
+    statusErrorTimer = null;
+  }, 2000);
 }
 
 callSubmitBtn.addEventListener("click", () => {

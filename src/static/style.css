@@ -312,6 +312,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   min-height: 1em;
 }
 
+#seat-status.err { color: var(--red); }
+
 #call-panel {
   display: flex;
   gap: 0.75rem;
