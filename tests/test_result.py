@@ -1,6 +1,6 @@
 """End-of-hand result + partner reveal."""
-from src.cards import Card
-from src.rooms import Bid, Phase, Table
+from src.bridge.cards import Card
+from src.bridge.rooms import Bid, Phase, Table
 
 
 def _ready_done_table(declarer: int, partner_seat: int, level: int, strain: str,

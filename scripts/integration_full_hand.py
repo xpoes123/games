@@ -10,7 +10,7 @@ import time
 from playwright.sync_api import Page, sync_playwright
 
 
-URL = "http://127.0.0.1:7781"
+URL = "http://127.0.0.1:7781/bridge/"
 NAMES = ["alice", "bob", "charlie", "dave"]
 
 

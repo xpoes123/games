@@ -9,7 +9,7 @@ def main() -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1200, "height": 900})
-        page.goto("http://127.0.0.1:7781")
+        page.goto("http://127.0.0.1:7781/bridge/")
         page.fill("#player-name", "alice")
         page.click("#join-btn")
         page.wait_for_selector("#game:not([hidden])")

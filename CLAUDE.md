@@ -53,17 +53,27 @@ Sage/Stavid. Will need this repo registered with Sentinel.
 ## Layout
 ```
 src/
-  main.py        FastAPI app, routes, WebSocket handler
-  config.py      pydantic-settings
-  rooms.py       In-memory room registry
-  static/        Frontend (HTML/CSS/JS)
+  main.py            Root FastAPI app — landing page + game mounts
+  config.py          pydantic-settings
+  bridge/            Bridge variant sub-app, mounted at /bridge
+    app.py             FastAPI sub-app: routes + WS handlers
+    rooms.py           Table/Phase/Bid models, rule enforcement
+    cards.py           Deck, deal_four, trick eval
+    static/            Frontend (HTML/CSS/JS) for /bridge
+  # future: chess/, etc. — mount each at its own URL prefix
 deploy/
-  games.service  systemd unit (installed at /etc/systemd/system/)
-  Caddyfile.snippet  reverse-proxy config (Caddy)
-  games.nginx.conf   reverse-proxy config (nginx alternative)
-tests/
-  test_rooms.py  unit tests
+  games.service          systemd unit
+  Caddyfile.snippet      reverse-proxy snippet
+  games.nginx.conf       nginx alternative
+tests/                   unit tests
+scripts/                 dev helpers (Playwright previews + integration)
 ```
+
+URL structure: `/` lists games, `/bridge/` is the bridge variant.
+Each game is a self-contained FastAPI sub-app — its own state, its own
+WS endpoint (`/<game>/ws`), no interference with siblings. To add a new
+game: create `src/<name>/`, write an `app.py` exporting a FastAPI
+instance, then `app.mount("/<name>", that_app)` in `src/main.py`.
 
 ## Conventions (matches Sage / Stavid / Sentinel)
 - Minimal abstractions, flat over nested

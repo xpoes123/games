@@ -1,6 +1,6 @@
 """Dealer rotation + cumulative trick totals across hands."""
-from src.cards import Card
-from src.rooms import Bid, Phase, Table
+from src.bridge.cards import Card
+from src.bridge.rooms import Bid, Phase, Table
 
 
 def _force_done_hand(t: Table, declarer: int, partner_seat: int, level: int, strain: str,

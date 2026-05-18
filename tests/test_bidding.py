@@ -1,5 +1,5 @@
-from src.cards import Card
-from src.rooms import Phase, Table, bid_value
+from src.bridge.cards import Card
+from src.bridge.rooms import Phase, Table, bid_value
 
 
 def test_bid_value_ordering():
@@ -18,7 +18,7 @@ def _seat_table(n: int) -> Table:
         async def send_text(self, _): ...
         async def close(self, **_): ...
     for i in range(n):
-        from src.rooms import Player
+        from src.bridge.rooms import Player
         t.players.append(Player(player_id=str(i), name=f"p{i}", socket=_Sock()))
     return t
 

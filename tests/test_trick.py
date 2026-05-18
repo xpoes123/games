@@ -1,5 +1,5 @@
-from src.cards import Card
-from src.rooms import RANK_VALUE, Table, evaluate_trick
+from src.bridge.cards import Card
+from src.bridge.rooms import RANK_VALUE, Table, evaluate_trick
 
 
 def test_highest_of_led_suit_wins():

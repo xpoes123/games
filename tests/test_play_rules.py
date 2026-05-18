@@ -1,6 +1,6 @@
 """Rule enforcement for the play phase: turn, follow-suit, trump break."""
-from src.cards import Card
-from src.rooms import Bid, Phase, Table
+from src.bridge.cards import Card
+from src.bridge.rooms import Bid, Phase, Table
 
 
 def _ready_table(trump_strain: str = "H", declarer: int = 0) -> Table:

@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 
 
 def main() -> None:
-    url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:7781"
+    url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:7781/bridge/"
     out = sys.argv[2] if len(sys.argv) > 2 else "/tmp/games-preview.png"
 
     with sync_playwright() as p:

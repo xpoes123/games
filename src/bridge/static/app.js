@@ -137,7 +137,11 @@ function showGame() {
 
 function connect(name) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  // Resolve "ws" relative to the current page so this works whether
+  // we're served at /bridge/ or any other future mount point.
+  const wsUrl = new URL("ws", location.href);
+  wsUrl.protocol = proto + ":";
+  ws = new WebSocket(wsUrl);
 
   ws.addEventListener("open", () => {
     ws.send(JSON.stringify({ name }));

@@ -1,4 +1,4 @@
-from src.rooms import MAX_PLAYERS, Phase, Table
+from src.bridge.rooms import MAX_PLAYERS, Phase, Table
 
 
 def test_empty_table_public_state():

@@ -1,6 +1,6 @@
 import random
 
-from src.cards import RANKS, SUITS, deal_four, new_deck
+from src.bridge.cards import RANKS, SUITS, deal_four, new_deck
 
 
 def test_deck_has_52_unique_cards():

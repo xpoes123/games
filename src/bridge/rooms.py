@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from src.cards import Card, deal_four
+from src.bridge.cards import Card, deal_four
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
