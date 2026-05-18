@@ -245,7 +245,9 @@ function renderPhase() {
     const partnerSeat = lastState.partner_seat;
     const partnerCard = lastState.partner_card;
     const result = lastState.result;
-    seatStatus.textContent = "hand complete";
+    const totals = lastState.total_tricks || [0, 0, 0, 0];
+    const handsPlayed = lastState.hands_played || 0;
+    seatStatus.textContent = `hand ${handsPlayed} complete · deal to continue`;
     let info = `<span class="current">${formatBid(contract)}</span> by ${seatName(declarer)}`;
     if (partnerSeat !== null && partnerSeat !== undefined) {
       info += ` & <span class="current">${seatName(partnerSeat)}</span>`;
@@ -259,6 +261,13 @@ function renderPhase() {
         ? `<span class="made">made ${result.delta === 0 ? "" : `+${result.delta}`}</span>`
         : `<span class="down">down ${-result.delta}</span>`;
       info += ` · ${verdict} (${result.team_tricks}/${result.target})`;
+    }
+    // Append cumulative totals
+    if (handsPlayed > 0) {
+      const totalsStr = [0, 1, 2, 3]
+        .map((i) => `${seatName(i)} ${totals[i]}`)
+        .join(" · ");
+      info += `<br/><span class="totals">totals: ${totalsStr}</span>`;
     }
     bidInfo.innerHTML = info;
     dealBtn.disabled = false;

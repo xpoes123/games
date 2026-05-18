@@ -117,6 +117,10 @@ class Table:
     turn: int | None = None
     trump_broken: bool = False
 
+    # Session totals (preserved across deals; reset on player leave / lobby).
+    total_tricks: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
+    hands_played: int = 0
+
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # ---- state ----
@@ -138,6 +142,9 @@ class Table:
             "turn": self.turn,
             "trump_broken": self.trump_broken,
         }
+        # Session-wide cumulative tricks (across all hands this lobby).
+        state["total_tricks"] = list(self.total_tricks)
+        state["hands_played"] = self.hands_played
         # Partnership becomes public at end-of-hand per the variant spec.
         if self.phase == Phase.DONE:
             state["partner_seat"] = self.partner_seat
@@ -194,6 +201,10 @@ class Table:
         self.tricks_won = [0, 0, 0, 0]
         self.turn = None
         self.trump_broken = False
+        # Full reset (player left or table emptied) — wipe session totals too.
+        self.total_tricks = [0, 0, 0, 0]
+        self.hands_played = 0
+        self.dealer = 0
 
     # ---- bidding ----
 
@@ -363,6 +374,12 @@ class Table:
         if sum(self.tricks_won) >= 13:
             self.phase = Phase.DONE
             self.turn = None
+            # Fold this hand's tricks into cumulative totals and rotate the
+            # dealer clockwise for the next deal.
+            for i in range(4):
+                self.total_tricks[i] += self.tricks_won[i]
+            self.hands_played += 1
+            self.dealer = (self.dealer + 1) % 4
         return winner
 
     # ---- player management ----

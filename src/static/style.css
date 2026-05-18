@@ -316,6 +316,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 #bid-info .made { color: #62b873; font-weight: 600; }
 #bid-info .down { color: var(--red); font-weight: 600; }
+#bid-info .totals { color: var(--muted); font-size: 0.8rem; }
 
 #call-panel {
   display: flex;
