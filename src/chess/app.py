@@ -38,9 +38,19 @@ padding:3rem;line-height:1.6;}</style></head>
 @app.get("/")
 async def index() -> HTMLResponse:
     idx = STATIC_DIR / "index.html"
-    if idx.exists():
-        return FileResponse(idx)  # type: ignore[return-value]
-    return HTMLResponse(_PLACEHOLDER_HTML)
+    if not idx.exists():
+        return HTMLResponse(_PLACEHOLDER_HTML)
+    html = idx.read_text()
+    # Cache-bust static asset URLs by the file's mtime — so a deploy that
+    # touches app.js/style.css forces clients to fetch the new content
+    # rather than serve a stale cached version.
+    for asset in ("app.js", "style.css"):
+        path = STATIC_DIR / asset
+        if path.exists():
+            v = int(path.stat().st_mtime)
+            html = html.replace(f"/chess/static/{asset}",
+                                f"/chess/static/{asset}?v={v}")
+    return HTMLResponse(html)
 
 
 @app.get("/healthz")
