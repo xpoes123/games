@@ -10,8 +10,9 @@
   <section id="entry">
     <h1>hearthstone chess</h1>
     <label>name <input id="player-name" maxlength="24" autocomplete="off" autofocus /></label>
-    <label>room code (4 letters) <input id="room-code" maxlength="8" autocomplete="off" /></label>
+    <label>room code <input id="room-code" maxlength="8" autocomplete="off" value="TEST" /></label>
     <button id="join-btn">join</button>
+    <p class="hint">tip: open this page in two tabs (different names, same room) to play locally</p>
     <div id="entry-status"></div>
     <p class="hint"><a href="/">back to games</a></p>
   </section>
@@ -24,6 +25,8 @@
         <span>room <span id="room-label"></span></span>
         <span class="sep">·</span>
         <button id="copy-btn" class="link">copy link</button>
+        <span class="sep">·</span>
+        <button id="open-opp-btn" class="link" title="Open another tab as the opposing seat">open opponent tab</button>
       </div>
       <div class="right">
         <button id="concede-btn">concede</button>

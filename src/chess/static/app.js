@@ -158,9 +158,9 @@ roomInput.addEventListener("keydown", (e) => { if (e.key === "Enter") join(); })
 
 function join() {
   const name = (nameInput.value || "anon").trim().slice(0, 24) || "anon";
-  const room = (roomInput.value || "").trim().toUpperCase();
-  if (!room || room.length < 1 || room.length > 8) {
-    entryStatus.textContent = "room code required (1-8 chars)";
+  const room = ((roomInput.value || "TEST").trim().toUpperCase()) || "TEST";
+  if (room.length > 8) {
+    entryStatus.textContent = "room code too long (max 8 chars)";
     return;
   }
   entryStatus.textContent = "connecting...";
@@ -225,6 +225,22 @@ copyBtn.addEventListener("click", () => {
   if (navigator.clipboard) navigator.clipboard.writeText(url.toString());
   toast("link copied");
 });
+
+const openOppBtn = $("open-opp-btn");
+if (openOppBtn) {
+  openOppBtn.addEventListener("click", () => {
+    const url = new URL(location.href);
+    url.searchParams.set("room", roomLabel.textContent);
+    // Pick a name that won't collide with our own; the server's
+    // reconnect-by-name code is keyed on exact match.
+    const oppName = lastName === "p1" ? "p2"
+                  : lastName === "a"  ? "b"
+                  : lastName === "alice" ? "bob"
+                  : `${lastName}-opp`;
+    url.searchParams.set("name", oppName);
+    window.open(url.toString(), "_blank");
+  });
+}
 
 concedeBtn.addEventListener("click", () => {
   concedeBtn.hidden = true;
@@ -552,7 +568,14 @@ function render() {
     bannerEl.hidden = false;
     bannerEl.innerHTML = `<div>${won ? "YOU WIN" : "GAME OVER"}</div>
       <div class="sub">${reason}</div>
-      <button onclick="location.reload()">play again</button>`;
+      <button id="rematch-btn">rematch</button>`;
+    const rematchBtn = document.getElementById("rematch-btn");
+    if (rematchBtn) {
+      rematchBtn.addEventListener("click", () => {
+        if (!ws || ws.readyState !== 1) { location.reload(); return; }
+        ws.send(JSON.stringify({ type: "new_game" }));
+      });
+    }
   } else {
     bannerEl.hidden = true;
   }

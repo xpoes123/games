@@ -144,11 +144,25 @@ class Room:
     # ---- player join/leave ----
 
     def add_player(self, name: str, ws=None) -> Player:
+        # Reconnect path: a disconnected player with the same name reclaims
+        # their seat. Without this, refreshing a tab lands you as spectator
+        # because the old pid still holds the seat (disconnect only nulls ws).
+        for seat_key in ("white", "black"):
+            pid = self.seats.get(seat_key)
+            if pid is None:
+                continue
+            held = self.players.get(pid)
+            if held is None:
+                continue
+            if held.ws is None and held.name == name:
+                held.ws = ws
+                return held
+        # Otherwise: claim the first free seat, else spectate.
         pid = secrets.token_hex(8)
-        if "white" not in self.seats:
+        if "white" not in self.seats or self.players.get(self.seats["white"]) is None:
             seat: Seat = "white"
             self.seats["white"] = pid
-        elif "black" not in self.seats:
+        elif "black" not in self.seats or self.players.get(self.seats["black"]) is None:
             seat = "black"
             self.seats["black"] = pid
         else:
@@ -774,6 +788,38 @@ class Room:
         self.winner = "black" if seat == "white" else "white"
         self.win_reason = "concede"
         self._log(f"{seat} concedes")
+
+    def rematch(self) -> str | None:
+        if self.phase != Phase.DONE:
+            return "no game to rematch"
+        # Wipe game state, keep seats, redeal as if both players just joined.
+        self.board = Board.starting()
+        self.active_seat = "white"
+        self.turn_number = 1
+        self.pending_prompts = {}
+        self.pending_card_play = None
+        self.log.clear()
+        self.turn_started_ms = 0
+        self.winner = None
+        self.win_reason = None
+        self.extra_turn_pending = False
+        for p in self.players.values():
+            p.hand = []
+            p.deck = []
+            p.gold = 0
+            p.gold_cap = 0
+            p.mulligan_done = False
+            self._reset_per_turn(p)
+            p.spell_tax = 0
+            p.spell_tax_next_turn = 0
+            p.extra_turn_queued = False
+            p.extra_turn_no_capture_king = False
+            p.opp_moves_chosen_by_me_next_turn = False
+        if "white" in self.seats and "black" in self.seats:
+            self._begin_mulligan()
+        else:
+            self.phase = Phase.LOBBY
+        return None
 
     # ---- state snapshot ----
 

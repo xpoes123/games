@@ -185,4 +185,13 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
         await _broadcast_state(room)
         return
 
+    if action == "new_game":
+        async with room.lock:
+            err = room.rematch()
+        if err:
+            await _send(player, {"type": "error", "text": err})
+            return
+        await _broadcast_state(room)
+        return
+
     # Unknown / unsupported actions silently dropped in Phase 1.
