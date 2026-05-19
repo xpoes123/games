@@ -272,12 +272,54 @@ async def scenario_rematch(rig: Rig) -> None:
     expect(len(rig.alice.state["hand"]) == 3, "white redrew 3")
 
 
+async def scenario_pawn_zones(rig: Rig) -> None:
+    """Pawns deploy on ranks 2-3 (white) / 7-6 (black); other pieces on 1-2 / 7-8."""
+    await rig.mulligan_both()
+    await rig.seed({
+        "white": {"hand": ["piece_pawn", "piece_knight", "piece_pawn", "piece_knight"],
+                  "gold": 10, "gold_cap": 10},
+        "phase": "PLAYING",
+        "active_seat": "white",
+    })
+    # Pawn on rank 1 should be rejected.
+    slot = rig.alice.slot_of("piece_pawn")
+    await rig.alice.send({"type": "play_card", "slot": slot,
+                          "targets": [{"square": "a1"}]})
+    expect(rig.alice.last_error is not None,
+           f"pawn on a1 rejected ({rig.alice.last_error!r})")
+    # Pawn on rank 2 should work.
+    slot = rig.alice.slot_of("piece_pawn")
+    await rig.alice.send({"type": "play_card", "slot": slot,
+                          "targets": [{"square": "a2"}]})
+    expect(rig.alice.last_error is None and rig.alice.piece_at("a2"),
+           f"pawn on a2 placed ({rig.alice.last_error!r})")
+    # Pawn on rank 3 should also work.
+    slot = rig.alice.slot_of("piece_pawn")
+    await rig.alice.send({"type": "play_card", "slot": slot,
+                          "targets": [{"square": "b3"}]})
+    expect(rig.alice.last_error is None and rig.alice.piece_at("b3"),
+           f"pawn on b3 placed ({rig.alice.last_error!r})")
+    # Knight on rank 3 should be rejected.
+    slot = rig.alice.slot_of("piece_knight")
+    await rig.alice.send({"type": "play_card", "slot": slot,
+                          "targets": [{"square": "c3"}]})
+    expect(rig.alice.last_error is not None,
+           f"knight on c3 rejected ({rig.alice.last_error!r})")
+    # Knight on rank 1 should work.
+    slot = rig.alice.slot_of("piece_knight")
+    await rig.alice.send({"type": "play_card", "slot": slot,
+                          "targets": [{"square": "c1"}]})
+    expect(rig.alice.last_error is None and rig.alice.piece_at("c1"),
+           f"knight on c1 placed ({rig.alice.last_error!r})")
+
+
 SCENARIOS: dict[str, Callable[[Rig], Awaitable[None]]] = {
     "combine_pawns": scenario_combine_pawns,
     "must_move": scenario_must_move,
     "summoning_sickness": scenario_summoning_sickness,
     "play_then_move_next_turn": scenario_play_then_move_next_turn,
     "rematch": scenario_rematch,
+    "pawn_zones": scenario_pawn_zones,
 }
 
 

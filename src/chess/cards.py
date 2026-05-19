@@ -33,7 +33,7 @@ PIECE_COSTS = {"pawn": 1, "knight": 2, "bishop": 3, "rook": 5, "queen": 8}
 
 CARD_DEFS: list[CardDef] = [
     # ---- Piece cards (48) ----
-    CardDef("piece_pawn", "Pawn", 1, "piece", 24, "place_pawn", ("empty_square_back2",)),
+    CardDef("piece_pawn", "Pawn", 1, "piece", 24, "place_pawn", ("empty_square_pawn_zone",)),
     CardDef("piece_knight", "Knight", 2, "piece", 6, "place_knight", ("empty_square_back2",)),
     CardDef("piece_bishop", "Bishop", 3, "piece", 6, "place_bishop", ("empty_square_back2",)),
     CardDef("piece_rook", "Rook", 5, "piece", 6, "place_rook", ("empty_square_back2",)),
@@ -53,7 +53,7 @@ CARD_DEFS: list[CardDef] = [
     CardDef("spell_pawn_back_or_two_moves", "Pawn Back / Two Pawn Moves", 2, "spell", 2,
             "spell_pawn_back_or_two_moves", modal=("Backward", "Two pawns")),
     CardDef("spell_play_2_pawns", "Play 2 Pawns", 2, "spell", 2, "spell_play_2_pawns",
-            ("empty_square_back2", "empty_square_back2")),
+            ("empty_square_pawn_zone", "empty_square_pawn_zone")),
     CardDef("spell_combine_pawns", "Combine 3 Pawns", 2, "spell", 2, "spell_combine_pawns",
             ("friendly_pawn", "friendly_pawn", "friendly_pawn", "empty_square_back2"),
             modal=("Knight", "Bishop")),
@@ -120,7 +120,7 @@ CARD_DEFS: list[CardDef] = [
             "spell_draw_rook_extra", ("empty_square_back2",), tags=("no_king_capture",)),
     CardDef("spell_quad_deploy", "Quadruple Deploy", 10, "spell", 1, "spell_quad_deploy",
             ("empty_square_back2", "empty_square_back2", "empty_square_back2",
-             "empty_square_back2")),
+             "empty_square_pawn_zone")),
     CardDef("spell_extra_turn", "Extra Turn", 10, "spell", 1, "spell_extra_turn",
             tags=("no_king_capture_bonus_turn",)),
     CardDef("spell_queen_and_strip", "Queen + Strip Material", 10, "spell", 1,

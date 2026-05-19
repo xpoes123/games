@@ -46,9 +46,10 @@ When a player must draw and their deck is empty: nothing happens, no damage
 (Hearthstone-style fatigue would need HP; we don't have HP). Just no card.
 
 ## Piece placement (from cards)
-- "Play a Pawn / Knight / Bishop / Rook / Queen" places the piece on **any
-  empty square in your own back two ranks** (ranks 1–2 for White, 7–8 for
-  Black) chosen by the player.
+- **Pawns** place on **ranks 2–3** for White / **ranks 7–6** for Black
+  (i.e. the "pawn zone" — one rank further forward than other pieces).
+- **Knight / Bishop / Rook / Queen** place on the **back two ranks** —
+  ranks 1–2 for White / 7–8 for Black.
 - Exceptions are written on the card (e.g. "Play a pawn or rook in your
   opponent's 2nd/7th ranks" → for White, rank 7; for Black, rank 2).
 - Placed pieces are normal pieces; they move on subsequent turns.

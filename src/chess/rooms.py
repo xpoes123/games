@@ -21,6 +21,8 @@ from src.chess.board import (
     Board,
     Move,
     back_two_ranks,
+    pawn_placement_ranks,
+    placement_zone_for,
     opponent_2nd_rank,
     sq_to_fr,
     fr_to_sq,
@@ -384,6 +386,20 @@ class Room:
         defn = card.defn
         key = defn.effect_key
 
+        # piece_any picks a kind via modal — placement zone depends on it.
+        if defn.id == "piece_any":
+            if len(targets) != 1:
+                return "need 1 placement target"
+            kind = (modal or "").lower()
+            if kind not in ("pawn", "knight", "bishop", "rook", "queen"):
+                return "pick a piece kind"
+            sq = targets[0].get("square")
+            zone = placement_zone_for(player.seat, kind)
+            if sq not in zone or not self.board.is_empty(sq or ""):
+                return ("target must be empty pawn-zone square"
+                        if kind == "pawn" else "target must be empty back-2 square")
+            return None
+
         # Bespoke shapes ---------------------------------------------------
         if key == "spell_eight_or_eight":
             choice = (modal or "").lower()
@@ -395,8 +411,8 @@ class Room:
                     sq = t.get("square")
                     if sq in claimed:
                         return "duplicate placement square"
-                    if sq not in back_two_ranks(player.seat) or not self.board.is_empty(sq or ""):
-                        return "target must be empty back-2 square"
+                    if sq not in pawn_placement_ranks(player.seat) or not self.board.is_empty(sq or ""):
+                        return "target must be empty pawn-zone square"
                     claimed.add(sq)
                 return None
             # material mode
@@ -506,12 +522,17 @@ class Room:
             if len(targets) != need:
                 return f"need {need} placement targets"
             seen = set()
-            for t in targets:
+            for spec, t in zip(defn.targets, targets):
                 sq = t.get("square")
                 if sq in seen:
                     return "duplicate placement square"
-                if sq not in back_two_ranks(player.seat) or not self.board.is_empty(sq or ""):
-                    return "target must be empty back-2 square"
+                zone = (pawn_placement_ranks(player.seat)
+                        if spec == "empty_square_pawn_zone"
+                        else back_two_ranks(player.seat))
+                if sq not in zone or not self.board.is_empty(sq or ""):
+                    return ("target must be empty pawn-zone square"
+                            if spec == "empty_square_pawn_zone"
+                            else "target must be empty back-2 square")
                 seen.add(sq)
             return None
 
@@ -579,6 +600,11 @@ class Room:
             if spec == "empty_square_back2":
                 if sq not in back_two_ranks(player.seat):
                     return "target must be your back two ranks"
+                if not self.board.is_empty(sq):
+                    return "target square must be empty"
+            elif spec == "empty_square_pawn_zone":
+                if sq not in pawn_placement_ranks(player.seat):
+                    return "pawns place on your 2nd or 3rd rank"
                 if not self.board.is_empty(sq):
                     return "target square must be empty"
             elif spec == "empty_square_back2_opp":

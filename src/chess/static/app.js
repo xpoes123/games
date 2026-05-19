@@ -839,10 +839,11 @@ function isCardTargetable(card, s) {
     if (pc.kind === "knight" || pc.kind === "bishop") minors.push(sq);
   }
   const back2 = backTwoSquares(mySeat).filter(sq => !lastBoardMap.has(sq));
+  const pawnZone = pawnZoneSquares(mySeat).filter(sq => !lastBoardMap.has(sq));
   switch (card.card_id) {
     case "spell_combine_pawns": return pawns.length >= 3 && back2.length >= 1;
     case "spell_pawns_to_queen": return pawns.length >= 5 && back2.length >= 1;
-    case "spell_play_2_pawns": return back2.length >= 2;
+    case "spell_play_2_pawns": return pawnZone.length >= 2;
     case "spell_remove_pawn_draw_3":
     case "spell_extra_pawn_move":
       return pawns.length >= 1;
@@ -871,8 +872,8 @@ function isCardTargetable(card, s) {
       return back2.length >= 1 && subsetSumExists(vals, 7);
     }
     case "spell_queen_and_strip": return back2.length >= 1; // strip optional (≤4)
-    case "spell_eight_or_eight": return back2.length >= 1;
-    case "spell_quad_deploy": return back2.length >= 4;
+    case "spell_eight_or_eight": return back2.length >= 1 || pawnZone.length >= 1;
+    case "spell_quad_deploy": return back2.length >= 3 && pawnZone.length >= 1;
     case "spell_rook_and_minor": return back2.length >= 2;
     case "spell_two_minors_opp_picks": return back2.length >= 2;
     case "spell_deploy_enemy_rank": return oppRankSquares(mySeat).some(sq => !lastBoardMap.has(sq));
@@ -881,9 +882,13 @@ function isCardTargetable(card, s) {
       const central = ["d4","d5","e4","e5"].filter(sq => !lastBoardMap.has(sq));
       return central.length >= 1; // a king always exists
     }
-    case "piece_pawn": case "piece_knight": case "piece_bishop":
-    case "piece_rook": case "piece_queen": case "piece_any":
+    case "piece_pawn": return pawnZone.length >= 1;
+    case "piece_knight": case "piece_bishop":
+    case "piece_rook": case "piece_queen":
       return back2.length >= 1;
+    case "piece_any":
+      // playable as long as ANY piece kind has a legal spot
+      return back2.length >= 1 || pawnZone.length >= 1;
   }
   return true;
 }
@@ -905,6 +910,16 @@ function backTwoSquares(seat) {
   const out = [];
   for (const r of ranks) for (let f = 0; f < 8; f++) out.push(frToSq(f, r - 1));
   return out;
+}
+function pawnZoneSquares(seat) {
+  // Pawns deploy one rank further forward than other pieces.
+  const ranks = seat === "white" ? [2, 3] : [7, 6];
+  const out = [];
+  for (const r of ranks) for (let f = 0; f < 8; f++) out.push(frToSq(f, r - 1));
+  return out;
+}
+function placementZoneFor(seat, kind) {
+  return kind === "pawn" ? pawnZoneSquares(seat) : backTwoSquares(seat);
 }
 function oppRankSquares(seat) {
   const r = seat === "white" ? 7 : 2;
@@ -1054,12 +1069,15 @@ function targetSpecsFor(card) {
   // derive after modal is picked.
   const id = card.card_id;
   switch (id) {
-    case "piece_pawn": case "piece_knight": case "piece_bishop":
+    case "piece_pawn": return ["empty_square_pawn_zone"];
+    case "piece_knight": case "piece_bishop":
     case "piece_rook": case "piece_queen":
     case "piece_any":
+      // piece_any zone is resolved at modal-pick time; default back-2 lets
+      // the targeting machine show *something* before the modal lands.
       return ["empty_square_back2"];
     case "spell_extra_pawn_move": return ["friendly_pawn"];
-    case "spell_play_2_pawns": return ["empty_square_back2", "empty_square_back2"];
+    case "spell_play_2_pawns": return ["empty_square_pawn_zone", "empty_square_pawn_zone"];
     case "spell_combine_pawns":
       return ["friendly_pawn", "friendly_pawn", "friendly_pawn", "empty_square_back2"];
     case "spell_adjacent_en_passant": return ["friendly_pawn", "enemy_piece_adj"];
@@ -1075,7 +1093,8 @@ function targetSpecsFor(card) {
     case "spell_rook_and_minor": return ["empty_square_back2", "empty_square_back2"];
     case "spell_deploy_enemy_rank": return ["empty_square_back2_opp"];
     case "spell_quad_deploy":
-      return ["empty_square_back2", "empty_square_back2", "empty_square_back2", "empty_square_back2"];
+      // knight, bishop, rook (back-2), then the pawn (pawn zone).
+      return ["empty_square_back2", "empty_square_back2", "empty_square_back2", "empty_square_pawn_zone"];
     case "spell_queen_and_strip": return ["empty_square_back2"]; // + strip sub-flow
     case "spell_draw_rook_extra": return ["empty_square_back2"];
     // Modal-only / no targets:
@@ -1186,11 +1205,17 @@ function validSquaresForCurrentStep(byKey) {
     for (const [sq, pc] of byKey) if (pc.color !== seat && pc.kind !== "king") set.add(sq);
     return set;
   }
+  // piece_any: zone depends on the kind picked after the chip row.
+  if (c.card_id === "piece_any" && casting.pickedKind) {
+    const zone = placementZoneFor(seat, casting.pickedKind);
+    for (const sq of zone) if (!byKey.has(sq)) set.add(sq);
+    return set;
+  }
   if (c.card_id === "spell_eight_or_eight" && casting.modal) {
     const mode = casting.modal.toLowerCase();
     if (mode.startsWith("pawn")) {
       const used = new Set(casting.targets.map(t => t.square));
-      for (const sq of backTwoSquares(seat)) if (!byKey.has(sq) && !used.has(sq)) set.add(sq);
+      for (const sq of pawnZoneSquares(seat)) if (!byKey.has(sq) && !used.has(sq)) set.add(sq);
       return set;
     }
     if (mode.startsWith("material")) {
@@ -1210,6 +1235,9 @@ function validSquaresForCurrentStep(byKey) {
   switch (spec) {
     case "empty_square_back2":
       for (const sq of backTwoSquares(seat)) if (!byKey.has(sq) && !exclude.has(sq)) set.add(sq);
+      break;
+    case "empty_square_pawn_zone":
+      for (const sq of pawnZoneSquares(seat)) if (!byKey.has(sq) && !exclude.has(sq)) set.add(sq);
       break;
     case "empty_square_back2_opp":
       for (const sq of oppRankSquares(seat)) if (!byKey.has(sq) && !exclude.has(sq)) set.add(sq);
@@ -1332,7 +1360,7 @@ function handleTargetClick(sq) {
       if (i >= 0) casting.targets.splice(i, 1);
       else {
         if (casting.targets.length >= 8) return;
-        if (!backTwoSquares(mySeat).includes(sq) || lastBoardMap.has(sq)) return;
+        if (!pawnZoneSquares(mySeat).includes(sq) || lastBoardMap.has(sq)) return;
         casting.targets.push({ square: sq });
       }
       render();

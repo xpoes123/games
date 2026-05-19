@@ -316,10 +316,11 @@ def test_spell_deploy_enemy_rank_pawn_on_rank7():
 
 def test_spell_eight_or_eight_pawn_mode():
     r, w, b = _setup()
-    targets = [{"square": s} for s in ("a1", "b1", "c1", "d1")]
+    # Pawns deploy on ranks 2-3 for white.
+    targets = [{"square": s} for s in ("a2", "b2", "c2", "d2")]
     _, err = _play(r, "white", "spell_eight_or_eight", targets, modal="Pawns")
     assert err is None
-    for sq in ("a1", "b1", "c1", "d1"):
+    for sq in ("a2", "b2", "c2", "d2"):
         assert r.board.at(sq).kind == "pawn"
 
 
@@ -399,14 +400,15 @@ def test_spell_draw_rook_extra_grants_move_and_rook():
 
 def test_spell_quad_deploy_four_kinds():
     r, w, b = _setup()
+    # knight/bishop/rook go in back-2 (rank 1-2), pawn in pawn-zone (rank 2-3).
     _, err = _play(r, "white", "spell_quad_deploy",
                    [{"square": "a1"}, {"square": "b1"},
-                    {"square": "c1"}, {"square": "d1"}])
+                    {"square": "c1"}, {"square": "d2"}])
     assert err is None
     assert r.board.at("a1").kind == "knight"
     assert r.board.at("b1").kind == "bishop"
     assert r.board.at("c1").kind == "rook"
-    assert r.board.at("d1").kind == "pawn"
+    assert r.board.at("d2").kind == "pawn"
 
 
 def test_spell_extra_turn_replays_same_seat():
