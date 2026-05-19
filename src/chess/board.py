@@ -312,9 +312,25 @@ def _is_promotion_rank(color: Color, sq: str) -> bool:
 
 
 def back_two_ranks(color: Color) -> list[str]:
+    """Non-pawn placement zone: ranks 1-2 for white, 7-8 for black."""
     if color == "white":
         return [fr_to_sq(f, r) for r in (0, 1) for f in range(8)]
     return [fr_to_sq(f, r) for r in (6, 7) for f in range(8)]
+
+
+def pawn_placement_ranks(color: Color) -> list[str]:
+    """Pawn placement zone: ranks 2-3 for white, 7-6 for black.
+    Pawns deploy one rank further forward than other pieces."""
+    if color == "white":
+        return [fr_to_sq(f, r) for r in (1, 2) for f in range(8)]
+    return [fr_to_sq(f, r) for r in (5, 6) for f in range(8)]
+
+
+def placement_zone_for(color: Color, kind: str) -> list[str]:
+    """Zone where a card-deployed piece of this kind can land."""
+    if kind == "pawn":
+        return pawn_placement_ranks(color)
+    return back_two_ranks(color)
 
 
 def opponent_2nd_rank(color: Color) -> list[str]:

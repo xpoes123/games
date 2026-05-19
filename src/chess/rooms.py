@@ -843,7 +843,7 @@ class Room:
             p.gold = 0
             p.gold_cap = 0
             p.mulligan_done = False
-            self._reset_per_turn(p)
+            p.reset_turn_flags()
             p.spell_tax = 0
             p.spell_tax_next_turn = 0
             p.extra_turn_queued = False

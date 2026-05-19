@@ -9,10 +9,15 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import os
+
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.chess.board import Piece
+from src.chess.cards import CARDS_BY_ID
+from src.chess.deck import Card
 from src.chess.rooms import Phase, Player, Room, registry
 
 log = logging.getLogger("chess")
@@ -56,6 +61,75 @@ async def index() -> HTMLResponse:
 @app.get("/healthz")
 async def healthz() -> JSONResponse:
     return JSONResponse({"ok": True, "rooms": len(registry.rooms)})
+
+
+def _debug_allowed() -> bool:
+    return os.getenv("CHESS_DEBUG_SEED", "").lower() in ("1", "true", "yes")
+
+
+@app.post("/debug/seed")
+async def debug_seed(req: Request) -> JSONResponse:
+    """Force a room into a specific state for dogfood/testing.
+
+    Gated by CHESS_DEBUG_SEED env var. Body:
+    {
+      "room": "ABCD",
+      "phase": "PLAYING",          // optional, defaults to current
+      "active_seat": "white",      // optional
+      "board": [{"sq":"e1","color":"white","kind":"king"}, ...],  // replaces board
+      "white": {"hand": ["spell_combine_pawns", "piece_pawn"], "gold": 10, "gold_cap": 10},
+      "black": {"hand": ["piece_pawn"], "gold": 5, "gold_cap": 5},
+      "clear_sickness": true       // strip placed_this_turn on all pieces
+    }
+    """
+    if not _debug_allowed():
+        return JSONResponse({"error": "debug disabled"}, status_code=403)
+    body = await req.json()
+    code = (body.get("room") or "").upper().strip()
+    if not code:
+        return JSONResponse({"error": "room required"}, status_code=400)
+    room = await registry.get_or_create(code)
+    async with room.lock:
+        if body.get("board") is not None:
+            room.board.squares.clear()
+            for spec in body["board"]:
+                pc = Piece(spec["color"], spec["kind"],
+                           has_moved=spec.get("has_moved", False),
+                           placed_this_turn=spec.get("placed_this_turn", False))
+                room.board.squares[spec["sq"]] = pc
+        if body.get("clear_sickness"):
+            for pc in room.board.squares.values():
+                pc.placed_this_turn = False
+        for seat in ("white", "black"):
+            spec = body.get(seat) or {}
+            p = room.player_by_seat(seat)
+            if not p:
+                continue
+            if "hand" in spec:
+                p.hand = [Card(instance_id=f"dbg-{i}", defn=CARDS_BY_ID[cid])
+                          for i, cid in enumerate(spec["hand"])]
+            if "gold" in spec:
+                p.gold = int(spec["gold"])
+            if "gold_cap" in spec:
+                p.gold_cap = int(spec["gold_cap"])
+            if "moves_remaining" in spec:
+                p.moves_remaining = int(spec["moves_remaining"])
+            if "has_acted_this_turn" in spec:
+                p.has_acted_this_turn = bool(spec["has_acted_this_turn"])
+        if "active_seat" in body:
+            room.active_seat = body["active_seat"]
+        if "phase" in body:
+            room.phase = Phase(body["phase"])
+        room._log(f"DEBUG seed applied")
+    # Broadcast fresh state to whoever is listening.
+    for pid, p in list(room.players.items()):
+        if p.ws is None:
+            continue
+        try:
+            await p.ws.send_text(json.dumps(room.snapshot_for(p)))
+        except Exception:
+            pass
+    return JSONResponse({"ok": True, "room": code})
 
 
 async def _send(player: Player, payload: dict) -> bool:
