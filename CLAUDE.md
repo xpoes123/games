@@ -82,11 +82,64 @@ instance, then `app.mount("/<name>", that_app)` in `src/main.py`.
 - pytest for tests; run `pytest tests/` before committing
 - No hardcoded secrets — all config via env / `.env`
 
-## Status (2026-05-18, end of overnight session)
+## Status (2026-05-18)
 
-Game is **playable end-to-end** per David's variant spec. Deploys are
-manual (Sentinel is offline):
+Bridge is **playable end-to-end** per David's variant spec. **Hearthstone
+Chess** (the second game) was built overnight 2026-05-18: backend,
+frontend, all 30 card effects, and a king-capture WS integration test.
+
+Deploys are manual (Sentinel is offline):
   `cd /opt/games && git pull && systemctl restart games`
+
+### Hearthstone Chess (`/chess/`)
+
+2-player chess + Hearthstone hybrid. Kings only on the board at start;
+both players draw from their own copy of a fixed 108-card deck. King
+capture wins. See `src/chess/docs/` for full SPEC, CARDS, PROTOCOL,
+STATE, UI, and PLAN documents.
+
+Done:
+- [x] Backend: chess engine (custom move generator, no-check rules,
+      modular-board wrap), deck/hand, room state machine, full WS routing
+- [x] All 60 spell effects + piece placement implemented end-to-end
+- [x] Frontend: lobby, mulligan UI, board (Tokyo Night palette, filled
+      Unicode glyphs), hand fan, opponent panel, log, gold/timer dots,
+      targeting flow for every prompt kind from PROTOCOL.md
+- [x] Animations: piece move tween, capture fade, placement fade-in,
+      king-capture flash, turn-change banner
+- [x] `scripts/integration_full_chess.py` — drives 2 WS clients through
+      a full king-capture game in ~5s, asserts win_reason
+- [x] `scripts/preview_chess.py` — Playwright screenshots of lobby,
+      mulligan, midgame, targeting, GAME OVER
+- [x] 112 tests pass (`./venv/bin/pytest tests/`)
+
+Open (deferred):
+- [ ] Reconnect-safe gameplay (refresh loses seat)
+- [ ] Card-draw slide-in animation (CSS keyframe exists, not wired)
+- [ ] Multi-table support per room code (currently 1 game per code)
+- [ ] AI opponent / single-player mode
+- [ ] Spectator UI (slot exists in code, no first-class UX)
+
+Notes:
+- No castling; no check enforcement. King capture is just a normal move
+  with extra game-ending consequence.
+- `Player` per-turn flags reset at end-of-own-turn; next-turn flags
+  (`spell_tax`, `extra_turn_queued`, `opp_moves_chosen_by_me_next_turn`)
+  apply at the start of the relevant player's next upkeep.
+- `spell_choose_opp_move` surfaces a `prompt {kind: choose_opp_move}` to
+  the CASTER on the opponent's next turn — caster picks from the
+  filtered legal-move list (excluding moves that would capture the
+  caster's own king).
+- `spell_extra_turn` re-enters `begin_turn` for the same seat with
+  `cannot_capture_king_this_turn = True` set.
+- Subset-sum cards (material→queen, 8-material, queen+strip) send the
+  picked piece squares in the first target dict; server re-validates
+  the sum.
+- `cards.py` is the single source of truth for the card list; effects
+  registered in `effects.py` by `effect_key`. To add a card, append to
+  the registry and register the effect.
+
+### Bridge (`/bridge/`)
 
 ### Done
 - [x] FastAPI + WS backend, Caddy-fronted at https://games.djiang.xyz

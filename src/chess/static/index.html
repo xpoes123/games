@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>hearthstone chess</title>
+  <link rel="stylesheet" href="/chess/static/style.css" />
+</head>
+<body>
+  <section id="entry">
+    <h1>hearthstone chess</h1>
+    <label>name <input id="player-name" maxlength="24" autocomplete="off" autofocus /></label>
+    <label>room code (4 letters) <input id="room-code" maxlength="8" autocomplete="off" /></label>
+    <button id="join-btn">join</button>
+    <div id="entry-status"></div>
+    <p class="hint"><a href="/">back to games</a></p>
+  </section>
+
+  <section id="game" hidden>
+    <header id="topbar">
+      <div class="left">
+        <span class="title">hearthstone chess</span>
+        <span class="sep">·</span>
+        <span>room <span id="room-label"></span></span>
+        <span class="sep">·</span>
+        <button id="copy-btn" class="link">copy link</button>
+      </div>
+      <div class="right">
+        <button id="concede-btn">concede</button>
+        <span id="concede-confirm" hidden>
+          really concede? <button id="concede-yes" class="danger">yes</button>
+          <button id="concede-no">no</button>
+        </span>
+      </div>
+    </header>
+
+    <div id="disconnect-banner" hidden>disconnected — reconnecting...</div>
+    <div id="status-line"></div>
+
+    <main id="board-area">
+      <aside id="log-panel">
+        <div class="log-title">log</div>
+        <ol id="log"></ol>
+      </aside>
+
+      <div id="opp-panel" class="panel">
+        <div class="panel-row">
+          <span class="who" id="opp-name">—</span>
+          <span class="sep">·</span>
+          <span>deck <span id="opp-deck">0</span></span>
+          <span class="sep">·</span>
+          <span>hand <span id="opp-hand-size">0</span></span>
+        </div>
+        <div class="panel-row">
+          <span class="gold-dots" id="opp-gold"></span>
+          <span class="gold-num" id="opp-gold-num">0/0</span>
+        </div>
+        <div class="opp-hand" id="opp-hand"></div>
+      </div>
+
+      <div id="board-wrap">
+        <div id="board"></div>
+        <div id="tween-layer"></div>
+      </div>
+
+      <div id="you-panel" class="panel">
+        <div class="panel-row">
+          <span class="who" id="you-name">—</span>
+          <span class="sep">·</span>
+          <span>deck <span id="you-deck">0</span></span>
+          <span class="sep">·</span>
+          <span>hand <span id="you-hand-size">0</span>/10</span>
+          <span class="sep">·</span>
+          <span class="timer-dots" id="timer-dots"></span>
+          <span class="timer-num" id="timer-num">—</span>
+        </div>
+        <div class="panel-row">
+          <span class="gold-dots" id="you-gold"></span>
+          <span class="gold-num" id="you-gold-num">0/0</span>
+        </div>
+        <div id="hand"></div>
+        <div class="actions">
+          <button id="end-turn-btn">End Turn</button>
+          <button id="mulligan-btn" hidden>Replace 0 cards</button>
+          <button id="cancel-targeting-btn" hidden>Cancel</button>
+          <span id="mulligan-wait" hidden>waiting for opponent...</span>
+        </div>
+      </div>
+
+      <aside id="side-panel">
+        <div class="side-title">prompt</div>
+        <div id="prompt-area">
+          <div class="side-empty">no active prompt.</div>
+        </div>
+      </aside>
+    </main>
+
+    <div id="banner" hidden></div>
+  </section>
+
+  <script src="/chess/static/app.js"></script>
+</body>
+</html>

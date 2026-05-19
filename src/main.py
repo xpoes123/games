@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.bridge.app import app as bridge_app
+from src.chess.app import app as chess_app
 from src.config import settings
 
 log = logging.getLogger("games")
@@ -51,6 +52,10 @@ LANDING_HTML = """<!doctype html>
         <div class="name">bridge variant</div>
         <div class="blurb">4-player trick taker with asymmetric partnership</div>
       </a></li>
+      <li><a href="/chess/">
+        <div class="name">hearthstone chess</div>
+        <div class="blurb">2-player chess + card game hybrid; king capture wins</div>
+      </a></li>
     </ul>
   </main>
 </body>
@@ -69,8 +74,14 @@ async def bridge_slash() -> RedirectResponse:
     return RedirectResponse("/bridge/", status_code=307)
 
 
+@app.get("/chess")
+async def chess_slash() -> RedirectResponse:
+    return RedirectResponse("/chess/", status_code=307)
+
+
 # Each game is its own sub-app — isolated state, isolated WS endpoints.
 app.mount("/bridge", bridge_app)
+app.mount("/chess", chess_app)
 
 
 def main() -> None:
