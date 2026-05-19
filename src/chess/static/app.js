@@ -547,7 +547,11 @@ function render() {
   cancelTargetingBtn.hidden = !casting;
 
   const myTurn = s.phase === "PLAYING" && s.active_seat === youSeat;
+  const meState = (youSeat && s[youSeat]) || {};
+  const mustMove = myTurn && !meState.has_acted_this_turn && !meState.no_chess_move_this_turn;
   endTurnBtn.disabled = !myTurn;
+  endTurnBtn.textContent = mustMove ? "End Turn (must move first)" : "End Turn";
+  endTurnBtn.classList.toggle("warn", mustMove);
 
   // Log
   logEl.innerHTML = "";

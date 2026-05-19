@@ -128,6 +128,8 @@ def test_end_turn_advances_seat_and_upkeeps():
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
     assert r.active_seat == "white"
+    # must-move rule: make any legal move first
+    r.make_move("white", "e1", "e2", None)
     err = r.end_turn("white")
     assert err is None
     assert r.active_seat == "black"
@@ -177,5 +179,6 @@ def test_spell_tax_opponent_applies_next_turn():
     assert err is None, err
     # Tax queued for opponent's NEXT turn; activates at upkeep.
     assert black.spell_tax_next_turn == 3
+    r.make_move("white", "e1", "e2", None)  # must-move rule
     r.end_turn("white")
     assert black.spell_tax == 3

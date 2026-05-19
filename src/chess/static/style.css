@@ -78,6 +78,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.link { background: transparent; border: none; color: var(--accent); padding: 0; }
 button.primary { border-color: var(--accent); color: var(--accent); }
 button.danger { border-color: var(--bad); color: var(--bad); }
+button.warn { border-color: var(--warn); color: var(--warn); }
 
 /* ---- topbar ---- */
 

@@ -32,6 +32,9 @@ class Piece:
     # option is gated on this rather than on the pawn's rank, since cards can
     # place pawns anywhere.
     has_moved: bool = False
+    # Summoning-sickness: a piece placed via a card on the current turn
+    # cannot move that same turn. Cleared at end-of-turn for that color.
+    placed_this_turn: bool = False
 
 
 def sq_to_fr(sq: str) -> tuple[int, int]:
@@ -86,6 +89,11 @@ class Board:
 
     def is_empty(self, sq: str) -> bool:
         return sq not in self.squares
+
+    def clear_sickness_for(self, color: Color) -> None:
+        for p in self.squares.values():
+            if p.color == color:
+                p.placed_this_turn = False
 
     def find_king(self, color: Color) -> str | None:
         for sq, p in self.squares.items():

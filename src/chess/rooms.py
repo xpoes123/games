@@ -81,6 +81,7 @@ class Player:
     extra_turn_no_capture_king: bool = False
     opp_moves_chosen_by_me_next_turn: bool = False
     mulligan_done: bool = False
+    has_acted_this_turn: bool = False  # made a chess move OR a counts-as-move card
 
     def hand_to_json(self, can_afford_fn) -> list[dict]:
         return [c.to_json(slot=i, playable=can_afford_fn(c)) for i, c in enumerate(self.hand)]
@@ -95,6 +96,7 @@ class Player:
         self.pawn_back_pawn_sq = None
         self.extra_pawn_squares.clear()
         self.opp_moves_chosen_by_me_next_turn = False
+        self.has_acted_this_turn = False
 
 
 @dataclass
@@ -272,9 +274,20 @@ class Room:
             return "not your turn"
         if self.pending_card_play is not None:
             return "resolve pending card first"
-        # Clear caster's per-turn flags.
         p = self.player_by_seat(seat)
         assert p
+        # Must-move enforcement: a card has either already locked out moves
+        # (no_chess_move_this_turn), or the player must have moved at least
+        # once (or used a counts-as-move card). Exception: if the player
+        # genuinely has zero legal moves (no piece can move anywhere; pieces
+        # placed this turn don't count), allow ending.
+        if not p.has_acted_this_turn and not p.no_chess_move_this_turn:
+            if self._player_has_any_legal_move(p):
+                return "you must make a move (or play a card that counts as your move)"
+        # Clear summoning-sickness on the player who's ending their turn —
+        # next time they're active their pieces will be free to move.
+        self.board.clear_sickness_for(seat)
+        # Clear caster's per-turn flags.
         p.reset_turn_flags()
         # Queued extra turn?
         if p.extra_turn_queued:
@@ -360,6 +373,7 @@ class Room:
         # Apply card tag side-effects after resolution.
         if "counts_as_move" in card.defn.tags:
             p.moves_remaining -= 1
+            p.has_acted_this_turn = True
 
         prefix_events = [{"kind": "card_played", "by": seat, "card_id": card.id}]
         self._log(f"{seat} plays {card.name}")
@@ -626,6 +640,8 @@ class Room:
         piece = self.board.at(src)
         if piece is None or piece.color != seat:
             return [], "no piece of yours on source"
+        if piece.placed_this_turn:
+            return [], "piece just placed — can't move it this turn"
         modular = p.modular_board_this_turn
         # If pawn_two_moves_armed is set, all moves this turn must be pawn moves.
         if p.pawn_two_moves_armed and piece.kind != "pawn":
@@ -670,6 +686,7 @@ class Room:
                 used_back = self._pawn_back_allowed(p, src)
         result = self.board.apply_move(move, modular=modular)
         p.moves_remaining -= 1
+        p.has_acted_this_turn = True
         if used_back:
             p.pawn_back_pawn_sq = None
         # Consume the per-pawn extra-step bonus once that pawn moves.
@@ -744,6 +761,23 @@ class Room:
             k: v for k, v in self.pending_prompts.items() if v.kind != "choose_opp_move"
         }
         return self.make_move(victim.seat, src, dst, promote)
+
+    def _player_has_any_legal_move(self, player: Player) -> bool:
+        modular = player.modular_board_this_turn
+        for sq, pc in list(self.board.squares.items()):
+            if pc.color != player.seat:
+                continue
+            if pc.placed_this_turn:
+                continue
+            if self.board.legal_destinations(sq, modular=modular):
+                return True
+            if pc.kind == "pawn" and self._pawn_back_allowed(player, sq):
+                back = self._pawn_back_square(pc, sq, modular)
+                if back is not None and self.board.is_empty(back):
+                    return True
+            if pc.kind == "pawn" and self._extra_pawn_destinations(player, pc, sq):
+                return True
+        return False
 
     def _extra_pawn_destinations(self, player: Player, piece, src: str) -> list[str]:
         bonus = player.extra_pawn_squares.get(src, 0)
@@ -830,6 +864,7 @@ class Room:
             "deck_size": len(p.deck),
             "hand_size": len(p.hand),
             "extra_moves": p.moves_remaining,
+            "has_acted_this_turn": p.has_acted_this_turn,
             "spell_tax": p.spell_tax,
             "pieces_free_this_turn": p.pieces_free_this_turn,
             "no_chess_move_this_turn": p.no_chess_move_this_turn,

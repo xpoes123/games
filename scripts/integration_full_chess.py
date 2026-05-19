@@ -208,10 +208,11 @@ async def main() -> int:
                     break
                 c.last_error = None
             if not moved:
-                # try moving toward enemy side: simple "push forward" heuristic
+                # try moving any of my pieces forward (king included — early
+                # game when nothing else is on the board, the king is the
+                # only legal mover, and summoning sickness keeps freshly
+                # placed pieces from moving the turn they arrive).
                 for p in my_pieces:
-                    if p["kind"] == "king":
-                        continue
                     file_ = p["sq"][0]
                     rank = int(p["sq"][1])
                     fwd = rank + (1 if c.seat == "white" else -1)

@@ -82,7 +82,7 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
         pawn_sq = pending.targets_collected[0]["square"]
         room.board.remove(pawn_sq)
         place_sq = pending.targets_collected[1]["square"]
-        room.board.place(place_sq, Piece(player.seat, "rook"))
+        room.board.place(place_sq, Piece(player.seat, "rook", placed_this_turn=True))
         return [
             {"kind": "piece_captured", "sq": pawn_sq, "victim_kind": "pawn", "victim_color": player.seat},
             {"kind": "piece_placed", "color": player.seat, "piece_kind": "rook", "sq": place_sq},
@@ -130,7 +130,7 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
     if key == "spell_deploy_enemy_rank":
         kind = (pending.modal_choice or "Pawn").lower()
         sq = pending.targets_collected[0]["square"]
-        room.board.place(sq, Piece(player.seat, kind))  # type: ignore[arg-type]
+        room.board.place(sq, Piece(player.seat, kind, placed_this_turn=True))  # type: ignore[arg-type]
         return [{"kind": "piece_placed", "color": player.seat, "piece_kind": kind, "sq": sq}]
     if key == "spell_eight_or_eight":
         return _eight_or_eight(room, player, pending)
@@ -151,7 +151,7 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
     if key == "spell_draw_rook_extra":
         room.draw_cards(player, 4)
         sq = pending.targets_collected[0]["square"]
-        room.board.place(sq, Piece(player.seat, "rook"))
+        room.board.place(sq, Piece(player.seat, "rook", placed_this_turn=True))
         player.moves_remaining += 1
         player.cannot_capture_king_this_turn = True
         return [
@@ -184,7 +184,7 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
 def _place_piece(room: "Room", player: "Player", pending: "PendingPlay", kind: str) -> list[dict]:
     target = pending.targets_collected[0]
     sq = target["square"]
-    room.board.place(sq, Piece(player.seat, kind))  # type: ignore[arg-type]
+    room.board.place(sq, Piece(player.seat, kind, placed_this_turn=True))  # type: ignore[arg-type]
     return [{
         "kind": "piece_placed", "color": player.seat, "piece_kind": kind, "sq": sq,
     }]
@@ -194,7 +194,7 @@ def _place_many(room: "Room", player: "Player", pending: "PendingPlay", kinds: l
     events = []
     for k, t in zip(kinds, pending.targets_collected):
         sq = t["square"]
-        room.board.place(sq, Piece(player.seat, k))  # type: ignore[arg-type]
+        room.board.place(sq, Piece(player.seat, k, placed_this_turn=True))  # type: ignore[arg-type]
         events.append({"kind": "piece_placed", "color": player.seat, "piece_kind": k, "sq": sq})
     return events
 
@@ -225,7 +225,7 @@ def _combine_pawns(room: "Room", player: "Player", pending: "PendingPlay") -> li
         events.append({"kind": "piece_captured", "sq": sq,
                        "victim_kind": "pawn", "victim_color": player.seat})
     kind = (pending.modal_choice or "Knight").lower()
-    room.board.place(place_sq, Piece(player.seat, kind))  # type: ignore[arg-type]
+    room.board.place(place_sq, Piece(player.seat, kind, placed_this_turn=True))  # type: ignore[arg-type]
     events.append({"kind": "piece_placed", "color": player.seat,
                    "piece_kind": kind, "sq": place_sq})
     return events
@@ -294,7 +294,7 @@ def _pawns_to_queen(room: "Room", player: "Player", pending: "PendingPlay") -> l
         room.board.remove(sq)
         events.append({"kind": "piece_captured", "sq": sq,
                        "victim_kind": "pawn", "victim_color": player.seat})
-    room.board.place(place_sq, Piece(player.seat, "queen"))
+    room.board.place(place_sq, Piece(player.seat, "queen", placed_this_turn=True))
     events.append({"kind": "piece_placed", "color": player.seat,
                    "piece_kind": "queen", "sq": place_sq})
     return events
@@ -312,7 +312,7 @@ def _material_to_queen(room: "Room", player: "Player", pending: "PendingPlay") -
         if pc is not None:
             events.append({"kind": "piece_captured", "sq": sq,
                            "victim_kind": pc.kind, "victim_color": pc.color})
-    room.board.place(place_sq, Piece(player.seat, "queen"))
+    room.board.place(place_sq, Piece(player.seat, "queen", placed_this_turn=True))
     events.append({"kind": "piece_placed", "color": player.seat,
                    "piece_kind": "queen", "sq": place_sq})
     return events
@@ -334,7 +334,7 @@ def _eight_or_eight(room: "Room", player: "Player", pending: "PendingPlay") -> l
     for t in pending.targets_collected:
         kind = t["piece_kind"]
         sq = t["square"]
-        room.board.place(sq, Piece(player.seat, kind))  # type: ignore[arg-type]
+        room.board.place(sq, Piece(player.seat, kind, placed_this_turn=True))  # type: ignore[arg-type]
         events.append({"kind": "piece_placed", "color": player.seat,
                        "piece_kind": kind, "sq": sq})
     return events
@@ -358,7 +358,7 @@ def _queen_and_strip(room: "Room", player: "Player", pending: "PendingPlay") -> 
     place_sq = pending.targets_collected[0]["square"]
     strip = pending.targets_collected[0].get("strip_squares") or []
     events = []
-    room.board.place(place_sq, Piece(player.seat, "queen"))
+    room.board.place(place_sq, Piece(player.seat, "queen", placed_this_turn=True))
     events.append({"kind": "piece_placed", "color": player.seat,
                    "piece_kind": "queen", "sq": place_sq})
     for sq in strip:

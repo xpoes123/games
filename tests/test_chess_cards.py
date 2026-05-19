@@ -152,6 +152,7 @@ def test_spell_tax_opponent():
     _, err = _play(r, "white", "spell_tax_opponent")
     assert err is None
     assert b.spell_tax_next_turn == 3
+    r.make_move("white", "e1", "e2", None)
     r.end_turn("white")
     assert b.spell_tax == 3
 
@@ -369,6 +370,7 @@ def test_spell_choose_opp_move_cross_turn():
     assert b.opp_moves_chosen_by_me_next_turn is True
     # Give black some pieces, then end turn → black's turn begins.
     r.board.place("a7", Piece("black", "pawn"))
+    r.make_move("white", "e1", "e2", None)  # must-move
     r.end_turn("white")
     assert r.active_seat == "black"
     # A choose_opp_move prompt is staged for white.
@@ -412,6 +414,7 @@ def test_spell_extra_turn_replays_same_seat():
     _, err = _play(r, "white", "spell_extra_turn")
     assert err is None
     assert w.extra_turn_queued is True
+    r.make_move("white", "e1", "e2", None)  # must-move
     r.end_turn("white")
     assert r.active_seat == "white"
     assert w.cannot_capture_king_this_turn is True
