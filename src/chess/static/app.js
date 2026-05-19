@@ -1271,6 +1271,19 @@ function stripSum() {
 function handleTargetClick(sq) {
   const c = casting.card;
 
+  // If a modal / kind picker is pending, force the user to resolve it
+  // before they can interact with the board. Avoids the previous race
+  // where clicks could advance the step machine past a still-pending
+  // modal and leave the card unresolvable.
+  if (casting.awaitingModal) {
+    flashStatusErr("pick a mode first (right panel)");
+    return;
+  }
+  if (casting.awaitingKind) {
+    flashStatusErr("pick a piece kind first (right panel)");
+    return;
+  }
+
   // material_to_queen — toggle sac selections, then place
   if (c.card_id === "spell_material_to_queen") {
     const sum = casting.sacSquares.reduce((s, sq2) => s + (MATERIAL_POINTS[lastBoardMap.get(sq2)?.kind] || 0), 0);
@@ -1528,12 +1541,13 @@ function renderCastingWidgets() {
       b.addEventListener("click", () => {
         casting.modal = o;
         casting.awaitingModal = false;
-        // For modal-driven cards, lock the schema after pick.
-        if (c.card_id === "spell_pawn_back_or_two_moves") {
-          submitCasting();
-          return;
-        }
-        if (c.card_id === "spell_wipe_type") {
+        // If all targets are already collected, the modal was the last
+        // missing piece — submit now. (Catches the case where the user
+        // clicked the placement square before picking the modal, e.g.
+        // combine_pawns: 3 pawns + back-2 square chosen, modal pending.)
+        if (casting.step >= casting.targetSpecs.length
+            && !casting.discardPicking
+            && !casting.awaitingKind) {
           submitCasting();
           return;
         }
