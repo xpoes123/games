@@ -662,6 +662,7 @@ function renderStatusLine(s, youSeat) {
 }
 
 function renderHand(s, youSeat) {
+  clearTooltip();
   handEl.innerHTML = "";
   if (youSeat !== "white" && youSeat !== "black") return;
   for (const card of s.hand || []) {
@@ -754,27 +755,35 @@ function makeCardEl(card, s) {
   return el;
 }
 
+// Single shared tooltip element. Using one DOM node (rather than per-card
+// listeners that create/remove their own) survives card re-renders: when
+// the hand redraws mid-hover the orphaned tip used to linger forever.
+let sharedTip = null;
+function clearTooltip() {
+  if (sharedTip) { sharedTip.remove(); sharedTip = null; }
+}
 function attachTooltip(el, card) {
-  let tip = null;
   el.addEventListener("mouseenter", (e) => {
-    tip = document.createElement("div");
-    tip.className = "card-tip";
-    tip.innerHTML = `<div class="tip-name">${escapeHtml(card.name)} <span class="tip-cost">${card.cost === -1 ? "?" : card.cost}g</span></div>
+    clearTooltip();
+    sharedTip = document.createElement("div");
+    sharedTip.className = "card-tip";
+    sharedTip.innerHTML = `<div class="tip-name">${escapeHtml(card.name)} <span class="tip-cost">${card.cost === -1 ? "?" : card.cost}g</span></div>
                      <div class="tip-effect">${escapeHtml(CARD_EFFECTS[card.card_id] || "")}</div>`;
-    document.body.appendChild(tip);
+    document.body.appendChild(sharedTip);
     moveTip(e);
   });
   el.addEventListener("mousemove", moveTip);
-  el.addEventListener("mouseleave", () => {
-    if (tip) { tip.remove(); tip = null; }
-  });
-  function moveTip(e) {
-    if (!tip) return;
-    const x = Math.min(e.clientX + 14, window.innerWidth - 240);
-    const y = Math.min(e.clientY + 14, window.innerHeight - 80);
-    tip.style.left = x + "px";
-    tip.style.top = y + "px";
-  }
+  el.addEventListener("mouseleave", clearTooltip);
+  // Belt-and-braces: if the element itself is removed from the DOM while
+  // the mouse is still over it (re-render), mouseleave never fires.
+  el.addEventListener("click", clearTooltip);
+}
+function moveTip(e) {
+  if (!sharedTip) return;
+  const x = Math.min(e.clientX + 14, window.innerWidth - 240);
+  const y = Math.min(e.clientY + 14, window.innerHeight - 80);
+  sharedTip.style.left = x + "px";
+  sharedTip.style.top = y + "px";
 }
 
 // ---- targeting playability ----
