@@ -251,6 +251,7 @@ mulliganBtn.addEventListener("click", () => {
   if (!ws || ws.readyState !== 1) return;
   const slots = [...mulliganMarks].sort((a, b) => a - b);
   ws.send(JSON.stringify({ type: "mulligan", redraw_slots: slots }));
+  mulliganMarks.clear();
   mulliganBtn.hidden = true;
   mulliganWait.hidden = false;
 });
@@ -704,14 +705,20 @@ function makeCardEl(card, s) {
   tag.textContent = card.type === "piece" ? "Piece" : "Spell";
   el.appendChild(tag);
 
-  // Mulligan / discard markers
-  if (s.phase === "MULLIGAN") {
+  // Mulligan / discard markers. Once we've submitted (mulliganWait is
+  // visible) we're just waiting for the opponent — don't keep the
+  // highlight or the toggle handler around.
+  if (s.phase === "MULLIGAN" && mulliganWait.hidden) {
     if (mulliganMarks.has(card.slot)) el.classList.add("selected-mull");
     el.addEventListener("click", () => {
       if (mulliganMarks.has(card.slot)) mulliganMarks.delete(card.slot);
       else mulliganMarks.add(card.slot);
       render();
     });
+    attachTooltip(el, card);
+    return el;
+  }
+  if (s.phase === "MULLIGAN") {
     attachTooltip(el, card);
     return el;
   }
