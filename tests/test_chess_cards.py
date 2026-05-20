@@ -38,14 +38,26 @@ def _play(r: Room, seat: str, card_id: str, targets=None, modal=None,
 
 # ---- 1g ----
 
-def test_spell_extra_pawn_move_lets_pawn_step_extra():
+def test_spell_extra_pawn_move_lets_moved_pawn_take_two_step():
     r, w, b = _setup()
-    r.board.place("a2", Piece("white", "pawn"))
-    events, err = _play(r, "white", "spell_extra_pawn_move", [{"square": "a2"}])
+    # Already-moved pawn (normally locked to 1 square) gets to step 2 with
+    # the bonus, since the card "lets it move twice."
+    r.board.place("a4", Piece("white", "pawn", has_moved=True))
+    events, err = _play(r, "white", "spell_extra_pawn_move", [{"square": "a4"}])
     assert err is None, err
-    # Pawn on starting-style rank can now go a3/a4/a5 if all empty.
-    dests = r.make_move("white", "a2", "a5", promote=None)
-    assert dests[1] is None
+    _, mv_err = r.make_move("white", "a4", "a6", promote=None)
+    assert mv_err is None, mv_err
+    assert r.board.at("a6").kind == "pawn"
+
+
+def test_spell_extra_pawn_move_does_not_grant_triple_step():
+    r, w, b = _setup()
+    r.board.place("a2", Piece("white", "pawn"))  # starting rank, can already 2-step
+    _, err = _play(r, "white", "spell_extra_pawn_move", [{"square": "a2"}])
+    assert err is None
+    # a5 would be a 3-step — disallowed under the cap.
+    _, mv_err = r.make_move("white", "a2", "a5", promote=None)
+    assert mv_err is not None
 
 
 # ---- 2g ----
@@ -177,13 +189,14 @@ def test_spell_remove_minor_either_side():
 
 # ---- 5g ----
 
-def test_spell_two_minors_opp_picks_places_two():
+def test_spell_forced_promotion_replaces_pawn():
     r, w, b = _setup()
-    _, err = _play(r, "white", "spell_two_minors_opp_picks",
-                   [{"square": "a1"}, {"square": "b1"}], modal="Knight")
+    r.board.place("a2", Piece("white", "pawn"))
+    _, err = _play(r, "white", "spell_forced_promotion",
+                   [{"square": "a2"}], modal="Knight")
     assert err is None
-    assert r.board.at("a1").kind == "knight"
-    assert r.board.at("b1").kind == "knight"
+    assert r.board.at("a2").kind == "knight"
+    assert r.board.at("a2").color == "white"
 
 
 def test_spell_discard_draw_discards_then_draws():
@@ -324,18 +337,17 @@ def test_spell_eight_or_eight_pawn_mode():
         assert r.board.at(sq).kind == "pawn"
 
 
-def test_spell_eight_or_eight_material_mode_must_total_8():
+def test_spell_eight_or_eight_material_mode_must_total_6():
     r, w, b = _setup()
-    # 2 bishops (3+3) + 1 knight (2) = 8
+    # 2 bishops (3+3) = 6
     targets = [
         {"square": "a1", "piece_kind": "bishop"},
         {"square": "b1", "piece_kind": "bishop"},
-        {"square": "c1", "piece_kind": "knight"},
     ]
     _, err = _play(r, "white", "spell_eight_or_eight", targets, modal="Material")
     assert err is None
     assert r.board.at("a1").kind == "bishop"
-    assert r.board.at("c1").kind == "knight"
+    assert r.board.at("b1").kind == "bishop"
 
 
 # ---- 9g ----
@@ -442,14 +454,24 @@ def test_spell_queen_and_strip_rejects_over_4():
     assert err is not None
 
 
-def test_spell_discard_opp_hand_dumps_and_draws_three():
+def test_spell_echo_steals_one_card():
     r, w, b = _setup()
-    b.hand.append(Card(instance_id="x", defn=CARDS_BY_ID["piece_pawn"]))
-    pre_deck = len(b.deck)
-    _, err = _play(r, "white", "spell_discard_opp_hand")
+    # Give opp a known card at slot 0.
+    b.hand.insert(0, Card(instance_id="t", defn=CARDS_BY_ID["piece_queen"]))
+    pre_w_hand = len(w.hand)
+    pre_b_hand = len(b.hand)
+    _, err = _play(r, "white", "spell_echo")
     assert err is None
-    assert len(b.hand) == 3
-    assert len(b.deck) == pre_deck - 3
+    # Echo is now mid-resolution, waiting for caster to pick a slot.
+    assert r.pending_card_play is not None
+    assert r.pending_card_play.card.defn.id == "spell_echo"
+    # Caster picks slot 0 (the queen).
+    events, err2 = r.apply_echo_pick("white", 0)
+    assert err2 is None
+    assert r.pending_card_play is None
+    assert len(b.hand) == pre_b_hand - 1
+    assert len(w.hand) == pre_w_hand + 1
+    assert w.hand[-1].defn.id == "piece_queen"
 
 
 def test_spell_free_pieces_zero_cost_pieces_this_turn():

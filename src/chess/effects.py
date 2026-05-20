@@ -58,7 +58,10 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
     if key == "spell_play_2_pawns":
         return _place_many(room, player, pending, ["pawn", "pawn"])
     if key == "spell_combine_pawns":
-        return _combine_pawns(room, player, pending)
+        events = _combine_pawns(room, player, pending)
+        drew = room.draw_cards(player, 1)
+        events.append({"kind": "card_drawn", "by": player.seat, "count": drew})
+        return events
     if key == "spell_adjacent_en_passant":
         return _adjacent_ep(room, player, pending)
     if key == "spell_remove_pawn_draw_3":
@@ -92,18 +95,32 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
         victim = room.board.remove(sq)
         if victim is None:
             return []
-        return [{
-            "kind": "piece_captured", "sq": sq,
-            "victim_kind": victim.kind, "victim_color": victim.color,
-        }]
-    if key == "spell_two_minors_opp_picks":
-        return _two_minors_opp_picks(room, player, pending)
+        drew = room.draw_cards(player, 1)
+        return [
+            {"kind": "piece_captured", "sq": sq,
+             "victim_kind": victim.kind, "victim_color": victim.color},
+            {"kind": "card_drawn", "by": player.seat, "count": drew},
+        ]
+    if key == "spell_forced_promotion":
+        pawn_sq = pending.targets_collected[0]["square"]
+        kind = (pending.modal_choice or "Knight").lower()
+        pc = room.board.at(pawn_sq)
+        if pc is None or pc.kind != "pawn" or pc.color != player.seat:
+            return []
+        room.board.place(pawn_sq, Piece(player.seat, kind, placed_this_turn=True))  # type: ignore[arg-type]
+        return [
+            {"kind": "piece_captured", "sq": pawn_sq, "victim_kind": "pawn", "victim_color": player.seat},
+            {"kind": "piece_placed", "color": player.seat, "piece_kind": kind, "sq": pawn_sq},
+        ]
     if key == "spell_discard_draw":
         return _discard_draw(room, player, pending)
     if key == "spell_teleport":
         return _teleport(room, player, pending)
     if key == "spell_king_to_center":
-        return _king_to_center(room, player, pending)
+        events = _king_to_center(room, player, pending)
+        drew = room.draw_cards(player, 1)
+        events.append({"kind": "card_drawn", "by": player.seat, "count": drew})
+        return events
     if key == "spell_draw_double":
         # Hand-size at moment of resolution. The played card has already been
         # removed from the hand by play_card.
@@ -124,6 +141,11 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
     if key == "spell_triple_move":
         player.moves_remaining = 3
         player.cannot_capture_king_this_turn = True
+        # Distinct-pieces constraint: each of the 3 moves must be a different
+        # piece. Tracked via Player.triple_move_used (squares pieces moved from
+        # / arrived at this turn).
+        player.triple_move_active = True
+        player.triple_move_used.clear()
         return []
     if key == "spell_rook_and_minor":
         return _rook_and_minor(room, player, pending)
@@ -166,13 +188,23 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
         return []
     if key == "spell_queen_and_strip":
         return _queen_and_strip(room, player, pending)
-    if key == "spell_discard_opp_hand":
+    if key == "spell_echo":
+        # Resolved via a prompt — see rooms.play_card / resolve_echo_pick.
+        # By the time we get here as a stub the pending.targets_collected has
+        # the picked opp_hand_slot. Move that card from opp hand to caster.
         opp = room.opponent_of(player.seat)
-        if opp is None:
+        if opp is None or not pending.targets_collected:
             return []
-        opp.hand.clear()
-        drew = room.draw_cards(opp, 3)
-        return [{"kind": "card_drawn", "by": opp.seat, "count": drew}]
+        slot = pending.targets_collected[0].get("opp_slot")
+        if slot is None or slot < 0 or slot >= len(opp.hand):
+            return []
+        card = opp.hand.pop(slot)
+        # Add to caster's hand (burn if over cap).
+        from src.chess.rooms import HAND_CAP
+        if len(player.hand) >= HAND_CAP:
+            return [{"kind": "card_burned", "by": player.seat, "card_id": card.defn.id}]
+        player.hand.append(card)
+        return [{"kind": "card_stolen", "by": player.seat, "card_id": card.defn.id}]
     if key == "spell_free_pieces":
         room.draw_cards(player, 5)
         player.pieces_free_this_turn = True

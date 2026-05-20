@@ -313,6 +313,130 @@ async def scenario_pawn_zones(rig: Rig) -> None:
            f"knight on c1 placed ({rig.alice.last_error!r})")
 
 
+async def scenario_triple_move_distinct(rig: Rig) -> None:
+    await rig.mulligan_both()
+    await rig.seed({
+        "board": [
+            {"sq": "e1", "color": "white", "kind": "king"},
+            {"sq": "e8", "color": "black", "kind": "king"},
+            {"sq": "a1", "color": "white", "kind": "rook"},
+            {"sq": "h1", "color": "white", "kind": "rook"},
+        ],
+        "white": {"hand": ["spell_triple_move"], "gold": 10, "gold_cap": 10},
+        "phase": "PLAYING",
+        "active_seat": "white",
+    })
+    await rig.alice.send({"type": "play_card",
+                          "slot": rig.alice.slot_of("spell_triple_move"),
+                          "targets": []})
+    expect(rig.alice.last_error is None, "triple move played")
+    # First move: rook a1 -> a2
+    await rig.alice.send({"type": "move", "from": "a1", "to": "a2"})
+    expect(rig.alice.last_error is None, "rook a1->a2 ok")
+    # Try moving the same rook again — should be rejected.
+    await rig.alice.send({"type": "move", "from": "a2", "to": "a3"})
+    expect(rig.alice.last_error and "distinct" in (rig.alice.last_error or "").lower(),
+           f"same-piece-twice rejected ({rig.alice.last_error!r})")
+    # Move a different piece.
+    await rig.alice.send({"type": "move", "from": "h1", "to": "h2"})
+    expect(rig.alice.last_error is None, "second piece ok")
+
+
+async def scenario_extra_turn_capped_gold(rig: Rig) -> None:
+    await rig.mulligan_both()
+    await rig.seed({
+        "white": {"hand": ["spell_extra_turn"], "gold": 10, "gold_cap": 10},
+        "phase": "PLAYING",
+        "active_seat": "white",
+    })
+    await rig.alice.send({"type": "play_card",
+                          "slot": rig.alice.slot_of("spell_extra_turn"),
+                          "targets": []})
+    expect(rig.alice.last_error is None, "extra turn played")
+    await rig.alice.send({"type": "move", "from": "e1", "to": "e2"})
+    await rig.alice.send({"type": "end_turn"})
+    # White goes again (bonus turn) — gold should be capped at 5.
+    expect(rig.alice.state["active_seat"] == "white", "white goes again")
+    g = rig.alice.state["white"]["gold"]
+    expect(g == 5, f"bonus turn gold capped at 5 (got {g})")
+
+
+async def scenario_adjacent_ep_friendly(rig: Rig) -> None:
+    """Adjacent En Passant now lets you 'capture' a friendly piece too."""
+    await rig.mulligan_both()
+    await rig.seed({
+        "board": [
+            {"sq": "e1", "color": "white", "kind": "king"},
+            {"sq": "e8", "color": "black", "kind": "king"},
+            {"sq": "e4", "color": "white", "kind": "pawn"},
+            {"sq": "f4", "color": "white", "kind": "knight"},  # friendly adjacent
+        ],
+        "white": {"hand": ["spell_adjacent_en_passant"], "gold": 10, "gold_cap": 10,
+                  "moves_remaining": 1},
+        "phase": "PLAYING",
+        "active_seat": "white",
+    })
+    await rig.alice.send({"type": "play_card",
+                          "slot": rig.alice.slot_of("spell_adjacent_en_passant"),
+                          "targets": [{"square": "e4"}, {"square": "f4"}]})
+    expect(rig.alice.last_error is None,
+           f"friendly target accepted ({rig.alice.last_error!r})")
+    expect(rig.alice.piece_at("f4") is None, "friendly knight removed")
+
+
+async def scenario_pawn_back_diagonal_capture(rig: Rig) -> None:
+    await rig.mulligan_both()
+    await rig.seed({
+        "board": [
+            {"sq": "e1", "color": "white", "kind": "king"},
+            {"sq": "e8", "color": "black", "kind": "king"},
+            {"sq": "e4", "color": "white", "kind": "pawn", "has_moved": True},
+            {"sq": "d3", "color": "black", "kind": "knight"},
+        ],
+        "white": {"hand": ["spell_pawn_back_or_two_moves"], "gold": 10, "gold_cap": 10,
+                  "moves_remaining": 1},
+        "phase": "PLAYING",
+        "active_seat": "white",
+    })
+    await rig.alice.send({"type": "play_card",
+                          "slot": rig.alice.slot_of("spell_pawn_back_or_two_moves"),
+                          "targets": [],
+                          "modal": "Backward"})
+    expect(rig.alice.last_error is None, "pawn-back armed")
+    await rig.alice.send({"type": "move", "from": "e4", "to": "d3"})
+    expect(rig.alice.last_error is None,
+           f"diagonal-back capture ok ({rig.alice.last_error!r})")
+    expect(rig.alice.piece_at("d3") and rig.alice.piece_at("d3")["color"] == "white",
+           "white pawn now on d3")
+
+
+async def scenario_echo_steals_card(rig: Rig) -> None:
+    await rig.mulligan_both()
+    await rig.seed({
+        "white": {"hand": ["spell_echo"], "gold": 10, "gold_cap": 10},
+        "black": {"hand": ["piece_queen", "piece_pawn"], "gold": 5, "gold_cap": 5},
+        "phase": "PLAYING",
+        "active_seat": "white",
+    })
+    pre_w = len(rig.alice.state.get("hand", []))
+    await rig.alice.send({"type": "play_card",
+                          "slot": rig.alice.slot_of("spell_echo"),
+                          "targets": []})
+    expect(rig.alice.last_error is None, "echo played")
+    # Server should have sent a prompt.
+    expect(any(p.get("kind") == "pick_opp_hand" for p in rig.alice.prompts),
+           "pick_opp_hand prompt arrived")
+    pr = next(p for p in rig.alice.prompts if p.get("kind") == "pick_opp_hand")
+    # Pick the queen (slot 0).
+    await rig.alice.send({"type": "prompt_response",
+                          "prompt_id": pr["prompt_id"], "opp_slot": 0})
+    post_w_hand = rig.alice.state.get("hand", [])
+    expect(len(post_w_hand) == pre_w + 1 - 1,  # -1 for echo played, +1 stolen
+           f"white hand size after echo (was {pre_w}, now {len(post_w_hand)})")
+    has_queen = any(c["card_id"] == "piece_queen" for c in post_w_hand)
+    expect(has_queen, "white now holds the stolen queen")
+
+
 SCENARIOS: dict[str, Callable[[Rig], Awaitable[None]]] = {
     "combine_pawns": scenario_combine_pawns,
     "must_move": scenario_must_move,
@@ -320,6 +444,11 @@ SCENARIOS: dict[str, Callable[[Rig], Awaitable[None]]] = {
     "play_then_move_next_turn": scenario_play_then_move_next_turn,
     "rematch": scenario_rematch,
     "pawn_zones": scenario_pawn_zones,
+    "triple_move_distinct": scenario_triple_move_distinct,
+    "extra_turn_capped_gold": scenario_extra_turn_capped_gold,
+    "adjacent_ep_friendly": scenario_adjacent_ep_friendly,
+    "pawn_back_diagonal_capture": scenario_pawn_back_diagonal_capture,
+    "echo_steals_card": scenario_echo_steals_card,
 }
 
 

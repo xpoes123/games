@@ -222,6 +222,11 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
             await _send(player, {"type": "error", "text": err})
             return
         await _broadcast_events(room, events)
+        # If the card stalled on a prompt for the caster (e.g. Echo's
+        # pick_opp_hand), send it as a `prompt` message in addition to state.
+        for pr in room.pending_prompts.values():
+            if pr.seat == player.seat:
+                await _send(player, pr.to_json())
         await _broadcast_state(room)
         return
 
@@ -265,6 +270,31 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
         if err:
             await _send(player, {"type": "error", "text": err})
             return
+        await _broadcast_state(room)
+        return
+
+    if action == "prompt_response":
+        prompt_id = msg.get("prompt_id")
+        async with room.lock:
+            prompt = room.pending_prompts.get(prompt_id) if prompt_id else None
+            if prompt is None:
+                await _send(player, {"type": "error", "text": "no pending prompt"})
+                return
+            if prompt.seat != player.seat:
+                await _send(player, {"type": "error", "text": "prompt not for you"})
+                return
+            if prompt.kind == "choose_opp_move":
+                move = msg.get("move") or {}
+                events, err = room.apply_opp_chosen_move(
+                    player.seat, move.get("from"), move.get("to"), move.get("promote"))
+            elif prompt.kind == "pick_opp_hand":
+                events, err = room.apply_echo_pick(player.seat, int(msg.get("opp_slot", -1)))
+            else:
+                events, err = [], f"unknown prompt kind {prompt.kind}"
+        if err:
+            await _send(player, {"type": "error", "text": err})
+            return
+        await _broadcast_events(room, events)
         await _broadcast_state(room)
         return
 

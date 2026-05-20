@@ -36,6 +36,7 @@ from src.chess.prompts import (
     Prompt,
     build_choose_opp_move_prompt,
     build_modal_prompt,
+    new_prompt_id,
     build_mulligan_prompt,
     build_target_prompt,
 )
@@ -81,9 +82,12 @@ class Player:
     spell_tax_next_turn: int = 0
     extra_turn_queued: bool = False
     extra_turn_no_capture_king: bool = False
+    extra_turn_gold_cap: int = 0  # bonus turn's gold cap (10g Extra Turn = 5)
     opp_moves_chosen_by_me_next_turn: bool = False
     mulligan_done: bool = False
     has_acted_this_turn: bool = False  # made a chess move OR a counts-as-move card
+    triple_move_active: bool = False
+    triple_move_used: set = field(default_factory=set)
 
     def hand_to_json(self, can_afford_fn) -> list[dict]:
         return [c.to_json(slot=i, playable=can_afford_fn(c)) for i, c in enumerate(self.hand)]
@@ -99,6 +103,8 @@ class Player:
         self.extra_pawn_squares.clear()
         self.opp_moves_chosen_by_me_next_turn = False
         self.has_acted_this_turn = False
+        self.triple_move_active = False
+        self.triple_move_used.clear()
 
 
 @dataclass
@@ -243,10 +249,16 @@ class Room:
         p = self.player_by_seat(seat)
         opp = self.opponent_of(seat)
         assert p
-        # Upkeep
-        if p.gold_cap < GOLD_CAP_MAX:
-            p.gold_cap += 1
-        p.gold = p.gold_cap
+        # Upkeep — Extra Turn bonus turns get a hard gold cap (e.g. 5).
+        if p.extra_turn_gold_cap > 0:
+            override_cap = p.extra_turn_gold_cap
+            p.extra_turn_gold_cap = 0
+            p.gold = min(p.gold_cap, override_cap)
+            # gold_cap itself unchanged — next normal turn resumes natural curve.
+        else:
+            if p.gold_cap < GOLD_CAP_MAX:
+                p.gold_cap += 1
+            p.gold = p.gold_cap
         p.moves_remaining = 1
         if p.no_chess_move_this_turn:
             p.moves_remaining = 0
@@ -298,6 +310,7 @@ class Room:
             # 10g card applies for the bonus turn.
             p.cannot_capture_king_this_turn = p.extra_turn_no_capture_king
             p.extra_turn_no_capture_king = False
+            p.extra_turn_gold_cap = 5  # bonus turn capped at 5 gold
             self.turn_number += 1
             self.begin_turn(seat)
             self._log(f"turn {self.turn_number} — {seat} (extra)")
@@ -356,6 +369,37 @@ class Room:
         p.gold -= effective_cost
         p.hand.pop(slot)
 
+        # Echo special-cases: stall here, emit a pick_opp_hand prompt that
+        # walks the caster through opp's hand. apply_echo_pick finishes the
+        # spell once they pick a slot.
+        if card.defn.id == "spell_echo":
+            opp = self.opponent_of(seat)
+            if opp is None or not opp.hand:
+                # Refund — nothing to steal.
+                p.gold += effective_cost
+                p.hand.insert(slot, card)
+                return [], "opponent's hand is empty"
+            self.pending_card_play = PendingPlay(
+                seat=seat, card=card, slot=slot, paid_gold=effective_cost,
+                targets_collected=[], modal_choice=modal,
+            )
+            prompt = Prompt(
+                prompt_id=new_prompt_id(),
+                seat=seat,
+                kind="pick_opp_hand",
+                label="Echo — pick a card from opponent's hand",
+                extra={
+                    "opp_hand": [
+                        {"slot": i, "card_id": c.defn.id, "name": c.defn.name,
+                         "cost": c.defn.cost, "type": c.defn.type}
+                        for i, c in enumerate(opp.hand)
+                    ],
+                },
+            )
+            self.pending_prompts[prompt.prompt_id] = prompt
+            self._log(f"{seat} plays Echo")
+            return [{"kind": "card_played", "by": seat, "card_id": card.defn.id}], None
+
         pending = PendingPlay(
             seat=seat, card=card, slot=slot, paid_gold=effective_cost,
             targets_collected=list(targets), modal_choice=modal,
@@ -404,8 +448,8 @@ class Room:
         if key == "spell_eight_or_eight":
             choice = (modal or "").lower()
             if choice.startswith("pawn"):
-                if not (1 <= len(targets) <= 8):
-                    return "pick 1..8 squares for the pawns"
+                if not (1 <= len(targets) <= 6):
+                    return "pick 1..6 squares for the pawns"
                 claimed: set[str] = set()
                 for t in targets:
                     sq = t.get("square")
@@ -429,8 +473,8 @@ class Room:
                     return "target must be empty back-2 square"
                 claimed.add(sq)
                 total += MATERIAL_POINTS[kind]
-            if total != 8:
-                return "material must total exactly 8"
+            if total != 6:
+                return "material must total exactly 6"
             return None
 
         if key == "spell_material_to_queen":
@@ -438,8 +482,6 @@ class Room:
                 return "need 1 placement target"
             t = targets[0]
             sq = t.get("square")
-            if sq not in back_two_ranks(player.seat) or not self.board.is_empty(sq or ""):
-                return "target must be empty back-2 square"
             sac = t.get("sac_squares") or []
             total = 0
             seen: set[str] = set()
@@ -453,6 +495,13 @@ class Room:
                 total += MATERIAL_POINTS.get(pc.kind, 0)
             if total != 7:
                 return "sacrifice must total exactly 7"
+            if sq not in back_two_ranks(player.seat):
+                return "placement must be in your back two ranks"
+            # Placement is allowed on any back-2 square that is empty OR
+            # currently holds one of the to-be-sacrificed pieces.
+            occupant = self.board.at(sq or "")
+            if occupant is not None and sq not in seen:
+                return "placement square must be empty or one of your sacrificed pieces"
             return None
 
         if key == "spell_queen_and_strip":
@@ -538,18 +587,22 @@ class Room:
 
         if key == "spell_adjacent_en_passant":
             if len(targets) != 2:
-                return "need pawn + enemy target"
+                return "need pawn + target piece"
             pawn_sq = targets[0].get("square")
-            enemy_sq = targets[1].get("square")
+            victim_sq = targets[1].get("square")
             pc = self.board.at(pawn_sq or "")
             if pc is None or pc.color != player.seat or pc.kind != "pawn":
                 return "target must be one of your pawns"
-            enemy = self.board.at(enemy_sq or "")
-            if enemy is None or enemy.color == player.seat:
-                return "target must be an enemy piece"
-            f1, r1 = sq_to_fr(pawn_sq); f2, r2 = sq_to_fr(enemy_sq)
+            victim = self.board.at(victim_sq or "")
+            if victim is None:
+                return "target square is empty"
+            if victim.kind == "king":
+                return "cannot target a king"
+            if victim_sq == pawn_sq:
+                return "target must be a different piece"
+            f1, r1 = sq_to_fr(pawn_sq); f2, r2 = sq_to_fr(victim_sq)
             if max(abs(f1 - f2), abs(r1 - r2)) != 1:
-                return "enemy must be adjacent to your pawn"
+                return "target must be adjacent to your pawn"
             return None
 
         if key == "spell_king_to_center":
@@ -632,6 +685,19 @@ class Room:
                 pc = self.board.at(sq or "")
                 if pc is None or pc.color == player.seat:
                     return "target must be an enemy piece"
+            elif spec == "any_adjacent_piece":
+                # used by Adjacent En Passant: any non-king piece adjacent to
+                # the friendly pawn picked at step 0. Friend or foe.
+                pawn_sq = targets[0].get("square")
+                pc = self.board.at(sq or "")
+                if pc is None:
+                    return "target must be a piece adjacent to your pawn"
+                if pc.kind == "king":
+                    return "cannot target a king"
+                if sq == pawn_sq:
+                    return "target must be a different piece"
+                if not self._is_adjacent(pawn_sq, sq):
+                    return "target must be adjacent to your pawn"
             elif spec == "any_knight_or_bishop":
                 pc = self.board.at(sq or "")
                 if pc is None or pc.kind not in ("knight", "bishop"):
@@ -668,6 +734,8 @@ class Room:
             return [], "no piece of yours on source"
         if piece.placed_this_turn:
             return [], "piece just placed — can't move it this turn"
+        if p.triple_move_active and src in p.triple_move_used:
+            return [], "Triple Move requires 3 distinct pieces"
         modular = p.modular_board_this_turn
         # If pawn_two_moves_armed is set, all moves this turn must be pawn moves.
         if p.pawn_two_moves_armed and piece.kind != "pawn":
@@ -676,11 +744,16 @@ class Room:
         # Extra-pawn-step bonus: this pawn can take 1 more forward step than normal.
         if piece.kind == "pawn":
             legal.update(self._extra_pawn_destinations(p, piece, src))
-        # Pawn-backward modal (option A of 2g card): allow one square back, no capture.
+        # Pawn-backward modal (option A of 2g card): allow one square back
+        # (empty), and also one diagonal-backward capture against an enemy.
         if piece.kind == "pawn" and self._pawn_back_allowed(p, src):
             back = self._pawn_back_square(piece, src, modular)
             if back is not None and self.board.is_empty(back):
                 legal.add(back)
+            for diag in self._pawn_back_diag_squares(piece, src, modular):
+                target = self.board.at(diag)
+                if target is not None and target.color != piece.color and target.kind != "king":
+                    legal.add(diag)
         if dst not in legal:
             return [], "illegal move"
         # King-capture restriction
@@ -713,6 +786,8 @@ class Room:
         result = self.board.apply_move(move, modular=modular)
         p.moves_remaining -= 1
         p.has_acted_this_turn = True
+        if p.triple_move_active:
+            p.triple_move_used.add(dst)  # piece is now at dst; mark it used
         if used_back:
             p.pawn_back_pawn_sq = None
         # Consume the per-pawn extra-step bonus once that pawn moves.
@@ -763,6 +838,33 @@ class Room:
             out.append({"from": m.src, "to": m.dst, "promote": m.promote})
         return out
 
+    def apply_echo_pick(self, seat: str, opp_slot: int) -> tuple[list[dict], str | None]:
+        """Caster picked a slot in opp's hand for Echo to steal."""
+        if self.pending_card_play is None or self.pending_card_play.card.defn.id != "spell_echo":
+            return [], "no echo pending"
+        if self.pending_card_play.seat != seat:
+            return [], "not your echo"
+        opp = self.opponent_of(seat)
+        p = self.player_by_seat(seat)
+        if opp is None or p is None:
+            return [], "bad room state"
+        if opp_slot < 0 or opp_slot >= len(opp.hand):
+            return [], "bad slot"
+        stolen = opp.hand.pop(opp_slot)
+        events: list[dict] = []
+        if len(p.hand) >= HAND_CAP:
+            events.append({"kind": "card_burned", "by": seat, "card_id": stolen.defn.id})
+        else:
+            p.hand.append(stolen)
+            events.append({"kind": "card_stolen", "by": seat, "card_id": stolen.defn.id})
+        # Clear prompt + pending state.
+        for pid, pr in list(self.pending_prompts.items()):
+            if pr.seat == seat and pr.kind == "pick_opp_hand":
+                del self.pending_prompts[pid]
+        self.pending_card_play = None
+        self._log(f"{seat} steals {stolen.defn.name} via Echo")
+        return events, None
+
     def apply_opp_chosen_move(self, caster_seat: str, src: str, dst: str,
                               promote: str | None) -> tuple[list[dict], str | None]:
         """The caster of spell_choose_opp_move resolves the prompt by picking
@@ -809,14 +911,16 @@ class Room:
         bonus = player.extra_pawn_squares.get(src, 0)
         if bonus <= 0:
             return []
-        # Add forward steps only (no capture via the extra distance per spec).
+        # Card text: "Your pawn can move an extra square this turn." Glossed
+        # by David as "it can move twice" — so the pawn's range this turn
+        # is capped at 2 squares regardless of how many bonuses stacked.
+        # A fresh pawn (already gets 2) gets nothing extra; a moved pawn
+        # gets to take its missed 2-step.
         f, r = sq_to_fr(src)
         direction = 1 if piece.color == "white" else -1
         out: list[str] = []
-        # The pawn's normal max forward depending on has_moved is 1 or 2; bonus
-        # extends by `bonus` more. Stop at occupied / out-of-bounds.
         base_max = 2 if not piece.has_moved else 1
-        total = base_max + bonus
+        total = min(base_max + bonus, 2)
         for step in range(1, total + 1):
             nr = r + direction * step
             if not (0 <= nr < 8):
@@ -825,6 +929,28 @@ class Room:
             if not self.board.is_empty(sq):
                 break
             out.append(sq)
+        return out
+
+    def _is_adjacent(self, a: str | None, b: str | None) -> bool:
+        if not a or not b:
+            return False
+        f1, r1 = sq_to_fr(a); f2, r2 = sq_to_fr(b)
+        return abs(f1 - f2) <= 1 and abs(r1 - r2) <= 1 and (a != b)
+
+    def _pawn_back_diag_squares(self, piece, src: str, modular: bool) -> list[str]:
+        """Diagonal-backward squares for a pawn (used by Pawn-Back card to
+        allow a backward capture in addition to a backward step)."""
+        f, r = sq_to_fr(src)
+        direction = -1 if piece.color == "white" else 1
+        out = []
+        for df in (-1, 1):
+            nf = f + df
+            nr = r + direction
+            if modular:
+                nf = nf % 8; nr = nr % 8
+            elif not (0 <= nf < 8 and 0 <= nr < 8):
+                continue
+            out.append(fr_to_sq(nf, nr))
         return out
 
     def _pawn_back_allowed(self, player: Player, src: str) -> bool:
@@ -931,6 +1057,13 @@ class Room:
             "win_reason": self.win_reason,
             "pending_prompt": None,
         }
+        # Surface any pending prompt for this viewer (Echo's pick_opp_hand,
+        # choose_opp_move, etc.).
+        if viewer is not None:
+            for pr in self.pending_prompts.values():
+                if pr.seat == viewer.seat:
+                    snap["pending_prompt"] = pr.to_json()
+                    break
         return snap
 
 

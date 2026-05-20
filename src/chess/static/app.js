@@ -29,33 +29,33 @@ const CARD_EFFECTS = {
   spell_draw_2: "Draw 2 cards.",
   spell_pawn_back_or_two_moves: "Choose: pawn moves backward OR two pawn moves this turn.",
   spell_play_2_pawns: "Place 2 pawns in your back two ranks.",
-  spell_combine_pawns: "Sacrifice 3 pawns, place a Knight or Bishop in your back two ranks.",
+  spell_combine_pawns: "Sacrifice 3 pawns; place a Knight or Bishop in your back two ranks; draw a card.",
   spell_adjacent_en_passant: "Capture an enemy adjacent to your pawn. Counts as your move.",
   spell_remove_pawn_draw_3: "Sacrifice a friendly pawn; draw 3.",
   spell_modular_board: "Board edges wrap this turn. Cannot capture enemy king.",
   spell_tax_opponent: "Opponent's spells cost +3 gold next turn.",
   spell_pawn_to_rook: "Sacrifice a friendly pawn; place a rook in your back two ranks.",
-  spell_remove_minor: "Remove any knight or bishop on the board.",
-  spell_two_minors_opp_picks: "Opponent picks Knight or Bishop; place 2 of that kind.",
+  spell_remove_minor: "Remove any knight or bishop on the board; draw a card.",
+  spell_forced_promotion: "Pick one of your pawns. Opponent picks Knight or Bishop; the pawn becomes that piece in place.",
   spell_discard_draw: "Discard any subset of your hand, draw one per discard.",
   spell_teleport: "Move one of your pieces to any empty square. Counts as your move.",
-  spell_king_to_center: "Move a king to d4/d5/e4/e5. Counts as move. No king capture.",
+  spell_king_to_center: "Move a king to d4/d5/e4/e5; draw a card. Counts as move. No king capture.",
   spell_draw_double: "Draw cards equal to your current hand size.",
   spell_pawns_to_queen: "Need 5+ pawns. Remove all your pawns; place a queen in back two.",
   spell_material_to_queen: "Sacrifice friendly pieces totaling exactly 7; place a queen.",
-  spell_convert_piece: "Steal an enemy non-king piece. Counts as your move.",
-  spell_triple_move: "Set your moves to 3 this turn. No king capture.",
+  spell_convert_piece: "Convert an enemy non-king piece to your control. Counts as your move.",
+  spell_triple_move: "This turn you move 3 distinct pieces. No king capture.",
   spell_rook_and_minor: "Place a rook AND a Knight/Bishop (modal) in your back two ranks.",
   spell_deploy_enemy_rank: "Place a Pawn or Rook on opponent's 2nd/7th rank.",
-  spell_eight_or_eight: "Up to 8 pawns OR pieces totaling exactly 8 in your back two ranks.",
+  spell_eight_or_eight: "Up to 6 pawns OR pieces totaling exactly 6 in your back two ranks.",
   spell_wipe_type: "Pick a piece kind; remove every piece of that kind (both sides).",
   spell_draw_full_no_move: "Draw to hand cap. Cannot make a chess move this turn.",
   spell_choose_opp_move: "You choose opponent's move on their next turn.",
   spell_draw_rook_extra: "Draw 4; place a rook; gain an extra move. Cannot checkmate.",
   spell_quad_deploy: "Place a knight, bishop, rook, and pawn in your back two ranks.",
-  spell_extra_turn: "Take another full turn after this one. Cannot capture king.",
+  spell_extra_turn: "Take another turn after this one (gold capped at 5). Cannot capture king.",
   spell_queen_and_strip: "Place a queen, then remove ≤4 material from enemy.",
-  spell_discard_opp_hand: "Opponent discards their hand, then draws 3.",
+  spell_echo: "Look at opponent's hand. Pick one card; it moves to your hand.",
   spell_free_pieces: "Draw 5. Piece cards cost 0 this turn.",
 };
 
@@ -446,18 +446,18 @@ const CARD_NAMES = {
   spell_tax_opponent: { name: "Spell Tax", cost: 4 },
   spell_pawn_to_rook: { name: "Pawn into Rook", cost: 4 },
   spell_remove_minor: { name: "Remove a Minor", cost: 4 },
-  spell_two_minors_opp_picks: { name: "Two Minors (Opp Picks)", cost: 5 },
+  spell_forced_promotion: { name: "Forced Promotion", cost: 4 },
   spell_discard_draw: { name: "Discard for Draw", cost: 5 },
   spell_teleport: { name: "Teleport", cost: 5 },
-  spell_king_to_center: { name: "King to Center", cost: 6 },
+  spell_king_to_center: { name: "King to Center", cost: 5 },
   spell_draw_double: { name: "Draw Hand Doubled", cost: 6 },
   spell_pawns_to_queen: { name: "5 Pawns into Queen", cost: 6 },
   spell_material_to_queen: { name: "7 Material into Queen", cost: 7 },
-  spell_convert_piece: { name: "Convert Piece", cost: 7 },
   spell_triple_move: { name: "Triple Move", cost: 7 },
+  spell_convert_piece: { name: "Convert Piece", cost: 8 },
   spell_rook_and_minor: { name: "Rook + Minor", cost: 8 },
   spell_deploy_enemy_rank: { name: "Deploy on Enemy Rank", cost: 8 },
-  spell_eight_or_eight: { name: "Up to 8 Pawns / 8 Material", cost: 8 },
+  spell_eight_or_eight: { name: "Up to 6 Pawns / 6 Material", cost: 8 },
   spell_wipe_type: { name: "Wipe Type", cost: 9 },
   spell_draw_full_no_move: { name: "Draw to Full (No Move)", cost: 9 },
   spell_choose_opp_move: { name: "Choose Opponent Move", cost: 9 },
@@ -465,7 +465,7 @@ const CARD_NAMES = {
   spell_quad_deploy: { name: "Quadruple Deploy", cost: 10 },
   spell_extra_turn: { name: "Extra Turn", cost: 10 },
   spell_queen_and_strip: { name: "Queen + Strip Material", cost: 10 },
-  spell_discard_opp_hand: { name: "Discard Opp Hand, Draw 3", cost: 10 },
+  spell_echo: { name: "Echo", cost: 10 },
   spell_free_pieces: { name: "Free Pieces", cost: 10 },
 };
 
@@ -875,7 +875,7 @@ function isCardTargetable(card, s) {
     case "spell_eight_or_eight": return back2.length >= 1 || pawnZone.length >= 1;
     case "spell_quad_deploy": return back2.length >= 3 && pawnZone.length >= 1;
     case "spell_rook_and_minor": return back2.length >= 2;
-    case "spell_two_minors_opp_picks": return back2.length >= 2;
+    case "spell_forced_promotion": return pawns.length >= 1;
     case "spell_deploy_enemy_rank": return oppRankSquares(mySeat).some(sq => !lastBoardMap.has(sq));
     case "spell_draw_rook_extra": return back2.length >= 1;
     case "spell_king_to_center": {
@@ -1084,7 +1084,7 @@ function targetSpecsFor(card) {
     case "spell_remove_pawn_draw_3": return ["friendly_pawn"];
     case "spell_pawn_to_rook": return ["friendly_pawn", "empty_square_back2"];
     case "spell_remove_minor": return ["any_knight_or_bishop"];
-    case "spell_two_minors_opp_picks": return ["empty_square_back2", "empty_square_back2"];
+    case "spell_forced_promotion": return ["friendly_pawn"];
     case "spell_teleport": return ["friendly_piece", "any_empty_square"];
     case "spell_king_to_center": return ["any_king", "empty_square_central4"];
     case "spell_pawns_to_queen": return ["empty_square_back2"];
@@ -1123,9 +1123,8 @@ function needsExtraSelection(card_id) {
     "spell_combine_pawns",
     "spell_rook_and_minor",
     "spell_deploy_enemy_rank",
+    "spell_forced_promotion",
     "piece_any",
-    "spell_combine_pawns",
-    "spell_two_minors_opp_picks",
   ].includes(card_id);
 }
 
@@ -1408,9 +1407,8 @@ function maybeInjectModalAfterStep() {
   if (c.card_id === "spell_deploy_enemy_rank" && casting.step === 1 && casting.modal === null) {
     casting.awaitingModal = true;
   }
-  if (c.card_id === "spell_two_minors_opp_picks" && casting.step === 2 && casting.modal === null) {
-    // Opp picks — but client provides modal so server resolves with a default.
-    // Surface a small modal as if you're picking; server handles the rest.
+  if (c.card_id === "spell_forced_promotion" && casting.step === 1 && casting.modal === null) {
+    // After picking the pawn, modal selects which minor it becomes.
     casting.awaitingModal = true;
   }
 }
@@ -1487,6 +1485,28 @@ function renderServerPrompt(p) {
         renderPromptArea();
       });
       list.appendChild(b);
+    }
+    box.appendChild(list);
+  } else if (p.kind === "pick_opp_hand") {
+    const list = document.createElement("div");
+    list.className = "moves-list";
+    for (const c of (p.opp_hand || [])) {
+      const b = document.createElement("button");
+      b.textContent = `${c.cost}g · ${c.name}`;
+      b.addEventListener("click", () => {
+        ws.send(JSON.stringify({
+          type: "prompt_response", prompt_id: p.prompt_id, opp_slot: c.slot,
+        }));
+        serverPrompt = null;
+        renderPromptArea();
+      });
+      list.appendChild(b);
+    }
+    if (!p.opp_hand || !p.opp_hand.length) {
+      const m = document.createElement("div");
+      m.className = "progress";
+      m.textContent = "opponent's hand is empty";
+      box.appendChild(m);
     }
     box.appendChild(list);
   } else if (p.kind === "select_modal") {
@@ -1696,7 +1716,7 @@ function modalOptionsForCard(card_id) {
     case "spell_deploy_enemy_rank": return ["Pawn", "Rook"];
     case "spell_eight_or_eight": return ["Pawns", "Material"];
     case "spell_wipe_type": return ["Pawn", "Knight", "Bishop", "Rook", "Queen"];
-    case "spell_two_minors_opp_picks": return ["Knight", "Bishop"];
+    case "spell_forced_promotion": return ["Knight", "Bishop"];
     default: return [];
   }
 }

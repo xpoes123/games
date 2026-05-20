@@ -60,46 +60,45 @@ CARD_DEFS: list[CardDef] = [
 
     # ---- 3-gold (6) ----
     CardDef("spell_adjacent_en_passant", "Adjacent En Passant", 3, "spell", 2,
-            "spell_adjacent_en_passant", ("friendly_pawn", "enemy_piece"),
+            "spell_adjacent_en_passant", ("friendly_pawn", "any_adjacent_piece"),
             tags=("counts_as_move",)),
     CardDef("spell_remove_pawn_draw_3", "Sacrifice Pawn, Draw 3", 3, "spell", 2,
             "spell_remove_pawn_draw_3", ("friendly_pawn",)),
     CardDef("spell_modular_board", "Modular Board", 3, "spell", 2, "spell_modular_board",
             tags=("no_king_capture",)),
 
-    # ---- 4-gold (6) ----
+    # ---- 4-gold (8) ----
     CardDef("spell_tax_opponent", "Spell Tax", 4, "spell", 2, "spell_tax_opponent"),
     CardDef("spell_pawn_to_rook", "Pawn into Rook", 4, "spell", 2, "spell_pawn_to_rook",
             ("friendly_pawn", "empty_square_back2")),
-    CardDef("spell_remove_minor", "Remove a Minor", 4, "spell", 2, "spell_remove_minor",
+    CardDef("spell_remove_minor", "Remove a Minor (Draw 1)", 4, "spell", 2, "spell_remove_minor",
             ("any_knight_or_bishop",)),
+    CardDef("spell_forced_promotion", "Forced Promotion", 4, "spell", 2,
+            "spell_forced_promotion", ("friendly_pawn",), modal=("Knight", "Bishop")),
 
-    # ---- 5-gold (6) ----
-    CardDef("spell_two_minors_opp_picks", "Two Minors (Opp Picks)", 5, "spell", 2,
-            "spell_two_minors_opp_picks",
-            ("empty_square_back2", "empty_square_back2")),
+    # ---- 5-gold (4) ----
     CardDef("spell_discard_draw", "Discard for Draw", 5, "spell", 2, "spell_discard_draw",
             ("discard_subset",)),
     CardDef("spell_teleport", "Teleport", 5, "spell", 2, "spell_teleport",
             ("friendly_piece", "any_empty_square"), tags=("counts_as_move",)),
-
-    # ---- 6-gold (6) ----
-    CardDef("spell_king_to_center", "King to Center", 6, "spell", 2, "spell_king_to_center",
+    CardDef("spell_king_to_center", "King to Center (Draw 1)", 5, "spell", 2, "spell_king_to_center",
             ("any_piece_kind", "empty_square_central4"),
             tags=("counts_as_move", "no_king_capture")),
+
+    # ---- 6-gold (4) ----
     CardDef("spell_draw_double", "Draw Hand Doubled", 6, "spell", 2, "spell_draw_double"),
     CardDef("spell_pawns_to_queen", "5 Pawns into Queen", 6, "spell", 2, "spell_pawns_to_queen",
             ("empty_square_back2",)),
 
-    # ---- 7-gold (6) ----
+    # ---- 7-gold (4) ----
     CardDef("spell_material_to_queen", "7 Material into Queen", 7, "spell", 2,
             "spell_material_to_queen", ("empty_square_back2",)),
-    CardDef("spell_convert_piece", "Convert Piece", 7, "spell", 2, "spell_convert_piece",
-            ("enemy_piece",), tags=("counts_as_move",)),
     CardDef("spell_triple_move", "Triple Move", 7, "spell", 2, "spell_triple_move",
             tags=("no_king_capture",)),
 
     # ---- 8-gold (6) ----
+    CardDef("spell_convert_piece", "Convert Piece", 8, "spell", 2, "spell_convert_piece",
+            ("enemy_piece",), tags=("counts_as_move",)),
     CardDef("spell_rook_and_minor", "Rook + Minor", 8, "spell", 2, "spell_rook_and_minor",
             ("empty_square_back2", "empty_square_back2"), modal=("Knight", "Bishop")),
     CardDef("spell_deploy_enemy_rank", "Deploy on Enemy Rank", 8, "spell", 2,
@@ -125,8 +124,7 @@ CARD_DEFS: list[CardDef] = [
             tags=("no_king_capture_bonus_turn",)),
     CardDef("spell_queen_and_strip", "Queen + Strip Material", 10, "spell", 1,
             "spell_queen_and_strip", ("empty_square_back2",)),
-    CardDef("spell_discard_opp_hand", "Discard Opponent Hand, Draw 3", 10, "spell", 1,
-            "spell_discard_opp_hand"),
+    CardDef("spell_echo", "Echo", 10, "spell", 1, "spell_echo"),
     CardDef("spell_free_pieces", "Free Pieces", 10, "spell", 1, "spell_free_pieces"),
 ]
 
