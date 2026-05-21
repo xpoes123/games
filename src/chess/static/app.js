@@ -123,6 +123,7 @@ let lastName = null;
 
 // Active targeting "play" — full client-side walk.
 let casting = null;
+let hoverSq = null;          // hovered friendly piece during own turn — preview legal moves
 /* casting shape:
  {
    slot, card,
@@ -651,14 +652,19 @@ function renderBoard(pieces, youSeat) {
 
   const validTargets = casting ? validSquaresForCurrentStep(byKey) : null;
 
-  // Legal move highlights for the currently-selected friendly piece
-  // (only when not mid-cast and only on your own turn).
+  // Legal move highlights: prefer the selected piece; otherwise show a
+  // hover preview if the cursor is over one of your own movable pieces.
   const myTurn = lastState && lastState.phase === "PLAYING" && lastState.active_seat === youSeat;
   let moveTargets = null;
-  if (!casting && selectedSq && myTurn) {
-    const pc = byKey.get(selectedSq);
-    if (pc && pc.color === youSeat && !pc.placed_this_turn) {
-      moveTargets = legalDestinations(selectedSq, byKey, youSeat);
+  let movePieceSq = null;
+  if (!casting && myTurn) {
+    const showSq = selectedSq || hoverSq;
+    if (showSq) {
+      const pc = byKey.get(showSq);
+      if (pc && pc.color === youSeat && !pc.placed_this_turn) {
+        moveTargets = legalDestinations(showSq, byKey, youSeat);
+        movePieceSq = showSq;
+      }
     }
   }
 
@@ -711,6 +717,7 @@ function renderBoard(pieces, youSeat) {
       }
 
       if (selectedSq === sq) cell.classList.add("selected");
+      else if (movePieceSq === sq && hoverSq === sq) cell.classList.add("hover-src");
       if (checkedSquares.has(sq)) cell.classList.add("in-check");
 
       if (validTargets && validTargets.has(sq)) {
@@ -735,6 +742,8 @@ function renderBoard(pieces, youSeat) {
       if (oppAnno.has(sq)) cell.classList.add("anno-opp");
 
       cell.addEventListener("click", () => onSquareClick(sq, byKey));
+      cell.addEventListener("mouseenter", () => onSquareHover(sq, byKey));
+      cell.addEventListener("mouseleave", () => onSquareHover(null, byKey));
       boardEl.appendChild(cell);
     }
   }
@@ -1073,6 +1082,19 @@ function frToSq(f, r) {
 }
 
 // ---- chess move (board interaction) ----
+
+function onSquareHover(sq, byKey) {
+  if (!lastState || lastState.phase !== "PLAYING") return;
+  if (casting) return;
+  // Only preview if it's your turn and the hovered square has one of your
+  // own movable pieces. Hover preview shouldn't fight with a click-selected
+  // piece — if something is selected, we leave hoverSq null and the
+  // selected-piece path drives the highlights.
+  const want = (sq && lastState.active_seat === mySeat && !selectedSq) ? sq : null;
+  if (want === hoverSq) return;
+  hoverSq = want;
+  renderBoardOnly();
+}
 
 function onSquareClick(sq, byKey) {
   if (!lastState) return;
