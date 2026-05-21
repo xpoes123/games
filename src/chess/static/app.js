@@ -36,7 +36,7 @@ const CARD_EFFECTS = {
   spell_tax_opponent: "Opponent's spells cost +3 gold next turn.",
   spell_pawn_to_rook: "Sacrifice a friendly pawn; place a rook in your back two ranks.",
   spell_remove_minor: "Remove any knight or bishop on the board; draw a card.",
-  spell_forced_promotion: "Pick one of your pawns. Opponent picks Knight or Bishop; the pawn becomes that piece in place.",
+  spell_forced_promotion: "Pick one of your pawns. Your OPPONENT picks Knight or Bishop; the pawn becomes that piece in place.",
   spell_discard_draw: "Discard any subset of your hand, draw one per discard.",
   spell_teleport: "Move one of your pieces to any empty square. Counts as your move.",
   spell_king_to_center: "Move a king to d4/d5/e4/e5; draw a card. Counts as move. No king capture.",
@@ -47,15 +47,15 @@ const CARD_EFFECTS = {
   spell_triple_move: "This turn you move 3 distinct pieces. No king capture.",
   spell_rook_and_minor: "Place a rook AND a Knight/Bishop (modal) in your back two ranks.",
   spell_deploy_enemy_rank: "Place a Pawn or Rook on opponent's 2nd/7th rank.",
-  spell_eight_or_eight: "Up to 6 pawns OR pieces totaling exactly 6 in your back two ranks.",
+  spell_eight_or_eight: "Up to 8 pawns OR pieces totaling exactly 8 in your back two ranks.",
   spell_wipe_type: "Pick a piece kind; remove every piece of that kind (both sides).",
   spell_draw_full_no_move: "Draw to hand cap. Cannot make a chess move this turn.",
-  spell_choose_opp_move: "You choose opponent's move on their next turn.",
+  spell_choose_opp_move: "Pick one of opponent's currently-legal moves; it resolves immediately.",
   spell_draw_rook_extra: "Draw 4; place a rook; gain an extra move. Cannot checkmate.",
   spell_quad_deploy: "Place a knight, bishop, rook, and pawn in your back two ranks.",
   spell_extra_turn: "Take another turn after this one (gold capped at 5). Cannot capture king.",
   spell_queen_and_strip: "Place a queen, then remove ≤4 material from enemy.",
-  spell_echo: "Look at opponent's hand. Pick one card; it moves to your hand.",
+  spell_echo: "Look at opponent's hand. Pick one card; you steal it AND immediately play it for free.",
   spell_free_pieces: "Draw 5. Piece cards cost 0 this turn.",
 };
 
@@ -92,6 +92,7 @@ const youGoldNumEl = $("you-gold-num");
 const youPanelEl = $("you-panel");
 const handEl = $("hand");
 const endTurnBtn = $("end-turn-btn");
+const undoBtn = $("undo-btn");
 const mulliganBtn = $("mulligan-btn");
 const cancelTargetingBtn = $("cancel-targeting-btn");
 const mulliganWait = $("mulligan-wait");
@@ -263,6 +264,13 @@ endTurnBtn.addEventListener("click", () => {
   ws.send(JSON.stringify({ type: "end_turn" }));
 });
 
+undoBtn.addEventListener("click", () => {
+  if (!ws || ws.readyState !== 1) return;
+  if (casting) cancelCasting();
+  ws.send(JSON.stringify({ type: "undo_move" }));
+  selectedSq = null;
+});
+
 mulliganBtn.addEventListener("click", () => {
   if (!ws || ws.readyState !== 1) return;
   const slots = [...mulliganMarks].sort((a, b) => a - b);
@@ -281,6 +289,16 @@ document.addEventListener("keydown", (e) => {
   }
 });
 document.addEventListener("contextmenu", (e) => {
+  // If a click landed on a board square, treat right-click as
+  // "toggle annotation" so players can highlight squares for their
+  // opponent. Casting/selection are cleared via Escape instead.
+  const cell = e.target.closest && e.target.closest(".sq");
+  if (cell) {
+    e.preventDefault();
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: "toggle_annotation", square: cell.dataset.sq }));
+    return;
+  }
   if (casting || selectedSq) {
     e.preventDefault();
     if (casting) cancelCasting();
@@ -316,7 +334,19 @@ function handleMessage(msg) {
     window.lastState = lastState;
     window.lastPhase = lastState.phase;
     render();
+    maybeAutoEchoCast();
   }
+}
+
+function maybeAutoEchoCast() {
+  if (!lastState || casting) return;
+  const echoId = lastState.you && lastState.you.echo_free_instance_id;
+  if (!echoId) return;
+  const card = (lastState.hand || []).find(c => c.instance_id === echoId);
+  if (!card) return;
+  // Auto-initiate the cast for the stolen card. Player can still cancel
+  // (Escape / cancel button) — the card stays in hand, free until end of turn.
+  beginCasting(card);
 }
 
 // ---- animations / events ----
@@ -457,7 +487,7 @@ const CARD_NAMES = {
   spell_convert_piece: { name: "Convert Piece", cost: 8 },
   spell_rook_and_minor: { name: "Rook + Minor", cost: 8 },
   spell_deploy_enemy_rank: { name: "Deploy on Enemy Rank", cost: 8 },
-  spell_eight_or_eight: { name: "Up to 6 Pawns / 6 Material", cost: 8 },
+  spell_eight_or_eight: { name: "Up to 8 Pawns / 8 Material", cost: 8 },
   spell_wipe_type: { name: "Wipe Type", cost: 9 },
   spell_draw_full_no_move: { name: "Draw to Full (No Move)", cost: 9 },
   spell_choose_opp_move: { name: "Choose Opponent Move", cost: 9 },
@@ -549,9 +579,17 @@ function render() {
   const myTurn = s.phase === "PLAYING" && s.active_seat === youSeat;
   const meState = (youSeat && s[youSeat]) || {};
   const mustMove = myTurn && !meState.has_acted_this_turn && !meState.no_chess_move_this_turn;
-  endTurnBtn.disabled = !myTurn;
-  endTurnBtn.textContent = mustMove ? "End Turn (must move first)" : "End Turn";
-  endTurnBtn.classList.toggle("warn", mustMove);
+  const myInCheck = youSeat === "white" ? s.white_in_check : s.black_in_check;
+  endTurnBtn.disabled = !myTurn || (myTurn && myInCheck);
+  let endLabel = "End Turn";
+  if (myTurn && myInCheck) endLabel = "End Turn (in check — get out first)";
+  else if (mustMove) endLabel = "End Turn (must move first)";
+  endTurnBtn.textContent = endLabel;
+  endTurnBtn.classList.toggle("warn", mustMove || (myTurn && myInCheck));
+
+  // Undo button only when the server says we can undo (our turn, snapshot
+  // exists, no card mid-resolution).
+  undoBtn.hidden = !s.can_undo;
 
   // Log
   logEl.innerHTML = "";
@@ -613,6 +651,33 @@ function renderBoard(pieces, youSeat) {
 
   const validTargets = casting ? validSquaresForCurrentStep(byKey) : null;
 
+  // Legal move highlights for the currently-selected friendly piece
+  // (only when not mid-cast and only on your own turn).
+  const myTurn = lastState && lastState.phase === "PLAYING" && lastState.active_seat === youSeat;
+  let moveTargets = null;
+  if (!casting && selectedSq && myTurn) {
+    const pc = byKey.get(selectedSq);
+    if (pc && pc.color === youSeat && !pc.placed_this_turn) {
+      moveTargets = legalDestinations(selectedSq, byKey, youSeat);
+    }
+  }
+
+  // Check highlight: which king square is under attack.
+  const checkedSquares = new Set();
+  if (lastState) {
+    if (lastState.white_in_check) {
+      for (const [sq, pc] of byKey) if (pc.kind === "king" && pc.color === "white") checkedSquares.add(sq);
+    }
+    if (lastState.black_in_check) {
+      for (const [sq, pc] of byKey) if (pc.kind === "king" && pc.color === "black") checkedSquares.add(sq);
+    }
+  }
+
+  // Square annotations (visible to both players).
+  const myAnno = new Set((lastState && lastState.annotations && lastState.annotations[youSeat]) || []);
+  const oppSeatStr = youSeat === "white" ? "black" : "white";
+  const oppAnno = new Set((lastState && lastState.annotations && lastState.annotations[oppSeatStr]) || []);
+
   for (let rIdx = 0; rIdx < 8; rIdx++) {
     for (let fIdx = 0; fIdx < 8; fIdx++) {
       const rank = flip ? rIdx + 1 : 8 - rIdx;
@@ -640,15 +705,21 @@ function renderBoard(pieces, youSeat) {
       if (pc) {
         const g = document.createElement("span");
         g.className = `piece ${pc.color}`;
+        if (pc.placed_this_turn) g.classList.add("sick");
         g.textContent = PIECE_GLYPH[pc.color][pc.kind];
         cell.appendChild(g);
       }
 
       if (selectedSq === sq) cell.classList.add("selected");
+      if (checkedSquares.has(sq)) cell.classList.add("in-check");
 
       if (validTargets && validTargets.has(sq)) {
         if (pc) cell.classList.add("target-piece");
         else cell.classList.add("target");
+      }
+      if (moveTargets && moveTargets.has(sq)) {
+        if (pc) cell.classList.add("move-capture");
+        else cell.classList.add("move-dest");
       }
       // Sub-marks (sac picks, strip picks)
       if (casting) {
@@ -660,11 +731,78 @@ function renderBoard(pieces, youSeat) {
           if (t && t.square === sq) cell.classList.add("marked-target");
         }
       }
+      if (myAnno.has(sq)) cell.classList.add("anno-mine");
+      if (oppAnno.has(sq)) cell.classList.add("anno-opp");
 
       cell.addEventListener("click", () => onSquareClick(sq, byKey));
       boardEl.appendChild(cell);
     }
   }
+}
+
+// ---- client-side legal-destination calc (for move-hint highlights) ----
+// Mirrors src/chess/board.py logic minus EP (server enforces). Modular-board
+// mode is rare and we conservatively skip it — server still validates.
+
+const _KNIGHT = [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
+const _KING = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+const _RAYS = {
+  rook: [[1,0],[-1,0],[0,1],[0,-1]],
+  bishop: [[1,1],[1,-1],[-1,1],[-1,-1]],
+  queen: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]],
+};
+
+function legalDestinations(src, byKey, mySeat) {
+  const pc = byKey.get(src);
+  if (!pc) return new Set();
+  const [f, r] = sqToFR(src);
+  const out = new Set();
+  const isMine = (sq) => byKey.has(sq) && byKey.get(sq).color === pc.color;
+  const isEnemy = (sq) => byKey.has(sq) && byKey.get(sq).color !== pc.color;
+
+  if (pc.kind === "knight" || pc.kind === "king") {
+    const deltas = pc.kind === "knight" ? _KNIGHT : _KING;
+    for (const [df, dr] of deltas) {
+      const nf = f + df, nr = r + dr;
+      if (nf < 0 || nf > 7 || nr < 0 || nr > 7) continue;
+      const sq = frToSq(nf, nr);
+      if (!isMine(sq)) out.add(sq);
+    }
+    return out;
+  }
+  if (pc.kind === "pawn") {
+    const dir = pc.color === "white" ? 1 : -1;
+    const fwd1 = frToSq(f, r + dir);
+    if (r + dir >= 0 && r + dir <= 7 && !byKey.has(fwd1)) {
+      out.add(fwd1);
+      const fwd2 = frToSq(f, r + 2 * dir);
+      if (!pc.has_moved && r + 2*dir >= 0 && r + 2*dir <= 7 && !byKey.has(fwd2)) {
+        out.add(fwd2);
+      }
+    }
+    for (const df of [-1, 1]) {
+      const nf = f + df, nr = r + dir;
+      if (nf < 0 || nf > 7 || nr < 0 || nr > 7) continue;
+      const sq = frToSq(nf, nr);
+      if (isEnemy(sq)) out.add(sq);
+    }
+    return out;
+  }
+  if (_RAYS[pc.kind]) {
+    for (const [df, dr] of _RAYS[pc.kind]) {
+      let nf = f, nr = r;
+      for (let i = 0; i < 8; i++) {
+        nf += df; nr += dr;
+        if (nf < 0 || nf > 7 || nr < 0 || nr > 7) break;
+        const sq = frToSq(nf, nr);
+        if (isMine(sq)) break;
+        out.add(sq);
+        if (isEnemy(sq)) break;
+      }
+    }
+    return out;
+  }
+  return out;
 }
 
 function renderStatusLine(s, youSeat) {
@@ -973,8 +1111,33 @@ function onSquareClick(sq, byKey) {
       return;
     }
   }
+  // Warn if the move leaves your own king attacked.
+  if (movesIntoCheck(selectedSq, sq, byKey, youSeat)) {
+    const ok = confirm("This move leaves your king in check. Confirm move?");
+    if (!ok) { selectedSq = null; renderBoardOnly(); return; }
+  }
   ws.send(JSON.stringify({ type: "move", from: selectedSq, to: sq }));
   selectedSq = null;
+}
+
+function movesIntoCheck(src, dst, byKey, mySeat) {
+  // Simulate: apply the move on a shallow copy, check if my king is attacked.
+  const sim = new Map();
+  for (const [k, v] of byKey) sim.set(k, { ...v });
+  const mover = sim.get(src);
+  if (!mover) return false;
+  sim.delete(src);
+  sim.set(dst, mover);
+  // Locate own king (king itself may have moved).
+  let kingSq = null;
+  for (const [k, v] of sim) if (v.kind === "king" && v.color === mySeat) { kingSq = k; break; }
+  if (!kingSq) return false;  // no king (already captured?) — server will handle
+  for (const [srcSq, pc] of sim) {
+    if (pc.color === mySeat) continue;
+    const dests = legalDestinations(srcSq, sim, pc.color);
+    if (dests.has(kingSq)) return true;
+  }
+  return false;
 }
 
 function promotionPicker(from, to) {
@@ -1123,7 +1286,6 @@ function needsExtraSelection(card_id) {
     "spell_combine_pawns",
     "spell_rook_and_minor",
     "spell_deploy_enemy_rank",
-    "spell_forced_promotion",
     "piece_any",
   ].includes(card_id);
 }
@@ -1407,10 +1569,7 @@ function maybeInjectModalAfterStep() {
   if (c.card_id === "spell_deploy_enemy_rank" && casting.step === 1 && casting.modal === null) {
     casting.awaitingModal = true;
   }
-  if (c.card_id === "spell_forced_promotion" && casting.step === 1 && casting.modal === null) {
-    // After picking the pawn, modal selects which minor it becomes.
-    casting.awaitingModal = true;
-  }
+  // Forced Promotion: opponent picks the Knight/Bishop — no caster modal.
 }
 
 function submitCasting() {
@@ -1589,6 +1748,13 @@ function renderCastingWidgets() {
       b.addEventListener("click", () => {
         casting.modal = o;
         casting.awaitingModal = false;
+        // spell_eight_or_eight has variable-count targets filled in
+        // AFTER the modal mode is picked. Don't auto-submit — let the
+        // player pick squares.
+        if (c.card_id === "spell_eight_or_eight") {
+          render();
+          return;
+        }
         // If all targets are already collected, the modal was the last
         // missing piece — submit now. (Catches the case where the user
         // clicked the placement square before picking the modal, e.g.

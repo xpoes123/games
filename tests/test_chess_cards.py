@@ -192,8 +192,14 @@ def test_spell_remove_minor_either_side():
 def test_spell_forced_promotion_replaces_pawn():
     r, w, b = _setup()
     r.board.place("a2", Piece("white", "pawn"))
+    # Caster plays the card; resolution stalls until opponent picks.
     _, err = _play(r, "white", "spell_forced_promotion",
-                   [{"square": "a2"}], modal="Knight")
+                   [{"square": "a2"}], modal=None)
+    assert err is None
+    assert r.board.at("a2").kind == "pawn"  # not yet resolved
+    assert r.pending_card_play is not None
+    # Opponent picks Knight.
+    events, err = r.apply_forced_promotion_pick("black", "Knight")
     assert err is None
     assert r.board.at("a2").kind == "knight"
     assert r.board.at("a2").color == "white"
@@ -337,16 +343,18 @@ def test_spell_eight_or_eight_pawn_mode():
         assert r.board.at(sq).kind == "pawn"
 
 
-def test_spell_eight_or_eight_material_mode_must_total_6():
+def test_spell_eight_or_eight_material_mode_must_total_8():
     r, w, b = _setup()
-    # 2 bishops (3+3) = 6
+    # bishop + bishop + rook = 3+3+5? no, target is exactly 8.
+    # knight(2) + bishop(3) + rook... = 10. So use bishop(3)+bishop(3)+pawn? pawn not allowed.
+    # Use queen(8) alone, or 5+3 = rook+bishop, or 5+2+? not 8. Use 5+3.
     targets = [
-        {"square": "a1", "piece_kind": "bishop"},
+        {"square": "a1", "piece_kind": "rook"},
         {"square": "b1", "piece_kind": "bishop"},
     ]
     _, err = _play(r, "white", "spell_eight_or_eight", targets, modal="Material")
     assert err is None
-    assert r.board.at("a1").kind == "bishop"
+    assert r.board.at("a1").kind == "rook"
     assert r.board.at("b1").kind == "bishop"
 
 
@@ -376,23 +384,22 @@ def test_spell_draw_full_no_move_blocks_movement():
     assert len(w.hand) == HAND_CAP
 
 
-def test_spell_choose_opp_move_cross_turn():
+def test_spell_choose_opp_move_immediate():
     r, w, b = _setup()
+    # Give black a piece so there's something to forcibly move.
+    r.board.place("a7", Piece("black", "pawn"))
     _, err = _play(r, "white", "spell_choose_opp_move")
     assert err is None
-    assert b.opp_moves_chosen_by_me_next_turn is True
-    # Give black some pieces, then end turn → black's turn begins.
-    r.board.place("a7", Piece("black", "pawn"))
-    r.make_move("white", "e1", "e2", None)  # must-move
-    r.end_turn("white")
-    assert r.active_seat == "black"
-    # A choose_opp_move prompt is staged for white.
+    # Prompt is for the caster (white), shown immediately during white's turn.
     cps = [p for p in r.pending_prompts.values() if p.kind == "choose_opp_move"]
     assert cps and cps[0].seat == "white"
-    # White picks a move on black's behalf.
+    # White (still active) picks a move on black's behalf — applies right now.
+    assert r.active_seat == "white"
     events, err2 = r.apply_opp_chosen_move("white", "a7", "a6", None)
     assert err2 is None
     assert r.board.at("a6").kind == "pawn"
+    # Active seat unchanged — white continues their turn.
+    assert r.active_seat == "white"
 
 
 # ---- 10g ----

@@ -52,6 +52,10 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
     if key == "spell_extra_pawn_move":
         sq = pending.targets_collected[0]["square"]
         player.extra_pawn_squares[sq] = player.extra_pawn_squares.get(sq, 0) + 1
+        # Grant a free pawn move so the bonus is actually usable, even if the
+        # player already exhausted their normal move this turn.
+        from src.chess.rooms import MAX_MOVES_PER_TURN
+        player.moves_remaining = min(player.moves_remaining + 1, MAX_MOVES_PER_TURN)
         return []
     if key == "spell_pawn_back_or_two_moves":
         return _pawn_back_or_two(room, player, pending)
@@ -166,15 +170,27 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
         player.moves_remaining = 0
         return [{"kind": "card_drawn", "by": player.seat, "count": drew}]
     if key == "spell_choose_opp_move":
+        # Immediate mode: caster picks one of opponent's currently-legal
+        # moves and it resolves NOW (during the caster's own turn). The
+        # picking is surfaced via a choose_opp_move prompt to the caster;
+        # apply_opp_chosen_move handles the actual move application.
         opp = room.opponent_of(player.seat)
-        if opp is not None:
-            opp.opp_moves_chosen_by_me_next_turn = True
+        if opp is None:
+            return []
+        moves = room._legal_moves_for_opp_chooser(opp, exclude_caster_king=True)
+        if not moves:
+            # Opp has nothing to move — spell fizzles silently.
+            return []
+        from src.chess.prompts import build_choose_opp_move_prompt
+        prompt = build_choose_opp_move_prompt(player.seat, moves)
+        room.pending_prompts[prompt.prompt_id] = prompt
         return []
     if key == "spell_draw_rook_extra":
         room.draw_cards(player, 4)
         sq = pending.targets_collected[0]["square"]
         room.board.place(sq, Piece(player.seat, "rook", placed_this_turn=True))
-        player.moves_remaining += 1
+        from src.chess.rooms import MAX_MOVES_PER_TURN
+        player.moves_remaining = min(player.moves_remaining + 1, MAX_MOVES_PER_TURN)
         player.cannot_capture_king_this_turn = True
         return [
             {"kind": "card_drawn", "by": player.seat, "count": 4},

@@ -101,6 +101,21 @@ class Board:
                 return sq
         return None
 
+    def is_attacked(self, sq: str, by_color: Color, modular: bool = False) -> bool:
+        for src, p in list(self.squares.items()):
+            if p.color != by_color:
+                continue
+            if sq in self.legal_destinations(src, modular=modular):
+                return True
+        return False
+
+    def is_in_check(self, color: Color, modular: bool = False) -> bool:
+        king_sq = self.find_king(color)
+        if king_sq is None:
+            return False
+        other: Color = "black" if color == "white" else "white"
+        return self.is_attacked(king_sq, other, modular=modular)
+
     def pieces_of(self, color: Color) -> list[tuple[str, Piece]]:
         return [(sq, p) for sq, p in self.squares.items() if p.color == color]
 
@@ -204,7 +219,8 @@ class Board:
 
     def to_state(self) -> list[dict]:
         return [
-            {"sq": sq, "kind": p.kind, "color": p.color}
+            {"sq": sq, "kind": p.kind, "color": p.color,
+             "has_moved": p.has_moved, "placed_this_turn": p.placed_this_turn}
             for sq, p in sorted(self.squares.items())
         ]
 

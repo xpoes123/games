@@ -153,6 +153,71 @@ async def _broadcast_state(room: Room) -> None:
             p.ws = None
 
 
+async def _broadcast_pending_prompts(room: Room) -> None:
+    """Send a separate `prompt` message to each player who has a pending
+    prompt addressed to them. The snapshot also carries it, but the client
+    listens for the dedicated message to drive the right-rail UI."""
+    for pr in list(room.pending_prompts.values()):
+        target = room.player_by_seat(pr.seat)
+        if target is None or target.ws is None:
+            continue
+        try:
+            await target.ws.send_text(json.dumps(pr.to_json()))
+        except Exception:
+            target.ws = None
+
+
+async def _arm_turn_timer(room: Room) -> None:
+    """Cancel any existing per-turn timer; if a turn is active, arm a new one
+    that auto-ends the turn after TURN_BUDGET_MS. Safety net against
+    unresponsive clients / mid-prompt deadlocks."""
+    import asyncio
+
+    if room.turn_timer_task is not None and not room.turn_timer_task.done():
+        room.turn_timer_task.cancel()
+    room.turn_timer_task = None
+    if room.phase != Phase.PLAYING:
+        return
+    seat_at_arm = room.active_seat
+    turn_at_arm = room.turn_number
+
+    async def _fire() -> None:
+        from src.chess.rooms import TURN_BUDGET_MS
+        try:
+            await asyncio.sleep(TURN_BUDGET_MS / 1000)
+        except asyncio.CancelledError:
+            return
+        async with room.lock:
+            # Stale-timer guard: turn may have already advanced naturally.
+            if room.phase != Phase.PLAYING:
+                return
+            if room.active_seat != seat_at_arm or room.turn_number != turn_at_arm:
+                return
+            # Force the turn to end. Bypass the "must move" and in-check rules
+            # so a stuck player never deadlocks the game; if they're in check
+            # at timeout, that's a loss-equivalent state but we don't make it
+            # game-ending here — the opponent can capture on their turn.
+            p = room.player_by_seat(seat_at_arm)
+            if p:
+                p.has_acted_this_turn = True  # bypass must-move
+            room._log(f"{seat_at_arm} timed out — auto end turn")
+            room.active_seat = "black" if seat_at_arm == "white" else "white"
+            room.turn_number += 1
+            if p:
+                p.reset_turn_flags()
+            room.board.clear_sickness_for(seat_at_arm)  # type: ignore[arg-type]
+            room.undo_snapshot = None
+            room.begin_turn(room.active_seat)
+        await _broadcast_events(room, [{"kind": "turn_end",
+                                        "next": room.active_seat,
+                                        "turn_number": room.turn_number}])
+        await _broadcast_pending_prompts(room)
+        await _broadcast_state(room)
+        await _arm_turn_timer(room)
+
+    room.turn_timer_task = asyncio.create_task(_fire())
+
+
 async def _broadcast_events(room: Room, events: list[dict]) -> None:
     for evt in events:
         for p in list(room.players.values()):
@@ -179,6 +244,7 @@ async def chess_socket(ws: WebSocket) -> None:
         player = room.add_player(name=name, ws=ws)
     await _send(player, {"type": "welcome", "your_seat": player.seat, "player_id": player.pid})
     await _broadcast_state(room)
+    await _arm_turn_timer(room)
 
     try:
         while True:
@@ -222,11 +288,7 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
             await _send(player, {"type": "error", "text": err})
             return
         await _broadcast_events(room, events)
-        # If the card stalled on a prompt for the caster (e.g. Echo's
-        # pick_opp_hand), send it as a `prompt` message in addition to state.
-        for pr in room.pending_prompts.values():
-            if pr.seat == player.seat:
-                await _send(player, pr.to_json())
+        await _broadcast_pending_prompts(room)
         await _broadcast_state(room)
         return
 
@@ -255,6 +317,26 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
         await _broadcast_events(room, [{"kind": "turn_end",
                                         "next": room.active_seat,
                                         "turn_number": room.turn_number}])
+        await _broadcast_pending_prompts(room)
+        await _broadcast_state(room)
+        await _arm_turn_timer(room)
+        return
+
+    if action == "undo_move":
+        async with room.lock:
+            err = room.undo_move(player.seat)
+        if err:
+            await _send(player, {"type": "error", "text": err})
+            return
+        await _broadcast_state(room)
+        return
+
+    if action == "toggle_annotation":
+        sq = msg.get("square")
+        if not isinstance(sq, str):
+            return
+        async with room.lock:
+            room.toggle_annotation(player.seat, sq)
         await _broadcast_state(room)
         return
 
@@ -271,6 +353,7 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
             await _send(player, {"type": "error", "text": err})
             return
         await _broadcast_state(room)
+        await _arm_turn_timer(room)
         return
 
     if action == "prompt_response":
@@ -289,12 +372,17 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
                     player.seat, move.get("from"), move.get("to"), move.get("promote"))
             elif prompt.kind == "pick_opp_hand":
                 events, err = room.apply_echo_pick(player.seat, int(msg.get("opp_slot", -1)))
+            elif prompt.kind == "select_modal":
+                # Currently only used by Forced Promotion (opponent picks).
+                option = msg.get("option")
+                events, err = room.apply_forced_promotion_pick(player.seat, option or "")
             else:
                 events, err = [], f"unknown prompt kind {prompt.kind}"
         if err:
             await _send(player, {"type": "error", "text": err})
             return
         await _broadcast_events(room, events)
+        await _broadcast_pending_prompts(room)
         await _broadcast_state(room)
         return
 

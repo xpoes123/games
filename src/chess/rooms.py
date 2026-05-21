@@ -20,6 +20,7 @@ from typing import Any, Literal
 from src.chess.board import (
     Board,
     Move,
+    Piece,
     back_two_ranks,
     pawn_placement_ranks,
     placement_zone_for,
@@ -88,6 +89,10 @@ class Player:
     has_acted_this_turn: bool = False  # made a chess move OR a counts-as-move card
     triple_move_active: bool = False
     triple_move_used: set = field(default_factory=set)
+    # Echo grants a free immediate cast of the stolen card, identified by
+    # instance_id (slot indices shift as cards are played). Consumed on the
+    # matching play_card, cleared at end-of-turn.
+    echo_free_instance_id: str | None = None
 
     def hand_to_json(self, can_afford_fn) -> list[dict]:
         return [c.to_json(slot=i, playable=can_afford_fn(c)) for i, c in enumerate(self.hand)]
@@ -105,6 +110,7 @@ class Player:
         self.has_acted_this_turn = False
         self.triple_move_active = False
         self.triple_move_used.clear()
+        self.echo_free_instance_id = None
 
 
 @dataclass
@@ -133,6 +139,12 @@ class Room:
         self.winner: str | None = None
         self.win_reason: str | None = None  # "king_capture" | "concede"
         self.extra_turn_pending: bool = False
+        self.annotations: dict[str, set[str]] = {"white": set(), "black": set()}
+        # Snapshot of state right before the most recent chess move on the
+        # current turn, used by undo_move. Cleared on turn change or any
+        # card play.
+        self.undo_snapshot: dict | None = None
+        self.turn_timer_task: asyncio.Task | None = None
         self.lock = asyncio.Lock()
 
     # ---- helpers ----
@@ -272,12 +284,6 @@ class Room:
                 p.hand.extend(new)
             # else burn (Hearthstone-style); nothing else to do.
         self.turn_started_ms = self.now_ms()
-        # If opponent's 9g "choose opp move" landed on this player, build a
-        # prompt that goes to the OTHER seat (the caster).
-        if p.opp_moves_chosen_by_me_next_turn and opp is not None:
-            moves = self._legal_moves_for_opp_chooser(p, exclude_caster_king=True)
-            prompt = build_choose_opp_move_prompt(opp.seat, moves)
-            self.pending_prompts[prompt.prompt_id] = prompt
         # Opponent's per-turn flags do NOT auto-reset here — they reset at end
         # of their own turn.
 
@@ -298,6 +304,12 @@ class Room:
         if not p.has_acted_this_turn and not p.no_chess_move_this_turn:
             if self._player_has_any_legal_move(p):
                 return "you must make a move (or play a card that counts as your move)"
+        # Cannot end turn while your king is in check.
+        if self.board.is_in_check(seat, modular=p.modular_board_this_turn):  # type: ignore[arg-type]
+            return "you are in check — get out of check before ending your turn"
+        # Discard any undo snapshot — once you commit to ending, the move stands.
+        self.undo_snapshot = None
+        self.annotations[seat].clear()
         # Clear summoning-sickness on the player who's ending their turn —
         # next time they're active their pieces will be free to move.
         self.board.clear_sickness_for(seat)
@@ -351,6 +363,14 @@ class Room:
 
         # Validate cost (with tax / Any-Piece modal cost / free-pieces).
         effective_cost = cost_for(p, card.defn, modal)
+        # Echo's free-cast: the stolen card (identified by instance_id) is
+        # free for its immediate auto-play. Consumed on this play_card.
+        echo_free_now = (
+            p.echo_free_instance_id is not None
+            and card.instance_id == p.echo_free_instance_id
+        )
+        if echo_free_now:
+            effective_cost = 0
         if p.gold < effective_cost:
             return [], "not enough gold"
 
@@ -368,6 +388,28 @@ class Room:
         # Charge gold, remove card from hand
         p.gold -= effective_cost
         p.hand.pop(slot)
+        if echo_free_now:
+            p.echo_free_instance_id = None
+        # Cards commit irreversibly — invalidate any prior undo snapshot.
+        self.undo_snapshot = None
+
+        # Forced Promotion: the opponent picks Knight or Bishop (not the
+        # caster). Hold the spell mid-resolution and prompt the opponent.
+        if card.defn.id == "spell_forced_promotion":
+            opp = self.opponent_of(seat)
+            if opp is None:
+                p.gold += effective_cost
+                p.hand.insert(slot, card)
+                return [], "no opponent"
+            self.pending_card_play = PendingPlay(
+                seat=seat, card=card, slot=slot, paid_gold=effective_cost,
+                targets_collected=list(targets), modal_choice=None,
+            )
+            prompt = build_modal_prompt(opp.seat, ["Knight", "Bishop"])
+            prompt.label = "Forced Promotion — pick Knight or Bishop"
+            self.pending_prompts[prompt.prompt_id] = prompt
+            self._log(f"{seat} plays Forced Promotion — awaiting opponent")
+            return [{"kind": "card_played", "by": seat, "card_id": card.defn.id}], None
 
         # Echo special-cases: stall here, emit a pick_opp_hand prompt that
         # walks the caster through opp's hand. apply_echo_pick finishes the
@@ -448,8 +490,8 @@ class Room:
         if key == "spell_eight_or_eight":
             choice = (modal or "").lower()
             if choice.startswith("pawn"):
-                if not (1 <= len(targets) <= 6):
-                    return "pick 1..6 squares for the pawns"
+                if not (1 <= len(targets) <= 8):
+                    return "pick 1..8 squares for the pawns"
                 claimed: set[str] = set()
                 for t in targets:
                     sq = t.get("square")
@@ -473,8 +515,8 @@ class Room:
                     return "target must be empty back-2 square"
                 claimed.add(sq)
                 total += MATERIAL_POINTS[kind]
-            if total != 6:
-                return "material must total exactly 6"
+            if total != 8:
+                return "material must total exactly 8"
             return None
 
         if key == "spell_material_to_queen":
@@ -716,6 +758,61 @@ class Room:
             drawn += 1
         return drawn
 
+    # ---- undo / annotations ----
+
+    def _snapshot_for_undo(self, seat: str) -> dict:
+        p = self.player_by_seat(seat)
+        assert p
+        squares = {
+            sq: Piece(pc.color, pc.kind, has_moved=pc.has_moved,
+                      placed_this_turn=pc.placed_this_turn)
+            for sq, pc in self.board.squares.items()
+        }
+        return {
+            "squares": squares,
+            "ep_target": self.board.ep_target,
+            "moves_remaining": p.moves_remaining,
+            "has_acted_this_turn": p.has_acted_this_turn,
+            "triple_move_used": set(p.triple_move_used),
+            "extra_pawn_squares": dict(p.extra_pawn_squares),
+            "pawn_back_pawn_sq": p.pawn_back_pawn_sq,
+            "log_len": len(self.log),
+        }
+
+    def undo_move(self, seat: str) -> str | None:
+        if self.phase != Phase.PLAYING:
+            return "not in playing phase"
+        if seat != self.active_seat:
+            return "not your turn"
+        if self.pending_card_play is not None:
+            return "can't undo with a card mid-resolution"
+        if self.undo_snapshot is None:
+            return "nothing to undo"
+        snap = self.undo_snapshot
+        p = self.player_by_seat(seat)
+        assert p
+        self.board.squares = snap["squares"]
+        self.board.ep_target = snap["ep_target"]
+        p.moves_remaining = snap["moves_remaining"]
+        p.has_acted_this_turn = snap["has_acted_this_turn"]
+        p.triple_move_used = snap["triple_move_used"]
+        p.extra_pawn_squares = snap["extra_pawn_squares"]
+        p.pawn_back_pawn_sq = snap["pawn_back_pawn_sq"]
+        while len(self.log) > snap["log_len"]:
+            self.log.pop()
+        self.undo_snapshot = None
+        self._log(f"{seat} undoes last move")
+        return None
+
+    def toggle_annotation(self, seat: str, sq: str) -> None:
+        if seat not in ("white", "black"):
+            return
+        ann = self.annotations[seat]
+        if sq in ann:
+            ann.discard(sq)
+        else:
+            ann.add(sq)
+
     # ---- chess move ----
 
     def make_move(self, seat: str, src: str, dst: str, promote: str | None) -> tuple[list[dict], str | None]:
@@ -783,6 +880,8 @@ class Room:
             direction_back = -1 if piece.color == "white" else 1
             if f1 == f2 and (r2 - r1) == direction_back:
                 used_back = self._pawn_back_allowed(p, src)
+        # Snapshot for undo BEFORE mutating board / counters.
+        self.undo_snapshot = self._snapshot_for_undo(seat)
         result = self.board.apply_move(move, modular=modular)
         p.moves_remaining -= 1
         p.has_acted_this_turn = True
@@ -839,7 +938,9 @@ class Room:
         return out
 
     def apply_echo_pick(self, seat: str, opp_slot: int) -> tuple[list[dict], str | None]:
-        """Caster picked a slot in opp's hand for Echo to steal."""
+        """Caster picked a slot in opp's hand for Echo to steal. The stolen
+        card lands in the caster's hand and is flagged for one free immediate
+        cast (echo_free_slot)."""
         if self.pending_card_play is None or self.pending_card_play.card.defn.id != "spell_echo":
             return [], "no echo pending"
         if self.pending_card_play.seat != seat:
@@ -853,9 +954,11 @@ class Room:
         stolen = opp.hand.pop(opp_slot)
         events: list[dict] = []
         if len(p.hand) >= HAND_CAP:
+            # No room — fall back to old behavior (burn).
             events.append({"kind": "card_burned", "by": seat, "card_id": stolen.defn.id})
         else:
             p.hand.append(stolen)
+            p.echo_free_instance_id = stolen.instance_id
             events.append({"kind": "card_stolen", "by": seat, "card_id": stolen.defn.id})
         # Clear prompt + pending state.
         for pid, pr in list(self.pending_prompts.items()):
@@ -865,30 +968,106 @@ class Room:
         self._log(f"{seat} steals {stolen.defn.name} via Echo")
         return events, None
 
+    def apply_forced_promotion_pick(self, opp_seat: str, choice: str) -> tuple[list[dict], str | None]:
+        pending = self.pending_card_play
+        if pending is None or pending.card.defn.id != "spell_forced_promotion":
+            return [], "no forced promotion pending"
+        caster = self.player_by_seat(pending.seat)
+        if caster is None:
+            return [], "bad state"
+        if self.opponent_of(pending.seat) is None or self.opponent_of(pending.seat).seat != opp_seat:  # type: ignore[union-attr]
+            return [], "only opponent picks"
+        kind = (choice or "").lower()
+        if kind not in ("knight", "bishop"):
+            return [], "must be Knight or Bishop"
+        pawn_sq = pending.targets_collected[0]["square"]
+        pc = self.board.at(pawn_sq)
+        if pc is None or pc.kind != "pawn" or pc.color != pending.seat:
+            # State drifted; refund and bail.
+            caster.gold += pending.paid_gold
+            self.pending_card_play = None
+            self.pending_prompts = {k: v for k, v in self.pending_prompts.items() if v.kind != "select_modal"}
+            return [], "target pawn no longer valid"
+        self.board.place(pawn_sq, Piece(pending.seat, kind, placed_this_turn=True))  # type: ignore[arg-type]
+        events = [
+            {"kind": "piece_captured", "sq": pawn_sq, "victim_kind": "pawn",
+             "victim_color": pending.seat},
+            {"kind": "piece_placed", "color": pending.seat, "piece_kind": kind,
+             "sq": pawn_sq},
+        ]
+        # Clear the modal prompt for the opponent.
+        self.pending_prompts = {k: v for k, v in self.pending_prompts.items() if v.kind != "select_modal"}
+        self.pending_card_play = None
+        self._log(f"{opp_seat} picks {kind.title()} — pawn at {pawn_sq} becomes {kind}")
+        return events, None
+
     def apply_opp_chosen_move(self, caster_seat: str, src: str, dst: str,
                               promote: str | None) -> tuple[list[dict], str | None]:
         """The caster of spell_choose_opp_move resolves the prompt by picking
-        a move from the victim's legal-move list."""
+        a move from the victim's legal-move list. Immediate mode: the spell
+        was cast on the caster's own turn and the chosen move applies right
+        now (the caster's turn continues afterward)."""
         if self.phase != Phase.PLAYING:
             return [], "not in playing phase"
-        victim = self.player_by_seat(self.active_seat)
-        assert victim
-        if not victim.opp_moves_chosen_by_me_next_turn:
-            return [], "no choose-opp-move active"
-        opp = self.opponent_of(victim.seat)
-        if opp is None or opp.seat != caster_seat:
-            return [], "only the caster can choose"
+        # Find the pending choose_opp_move prompt for this caster.
+        has_prompt = any(
+            pr.seat == caster_seat and pr.kind == "choose_opp_move"
+            for pr in self.pending_prompts.values()
+        )
+        if not has_prompt:
+            return [], "no choose-opp-move pending"
+        victim = self.opponent_of(caster_seat)
+        if victim is None:
+            return [], "no victim"
         moves = self._legal_moves_for_opp_chooser(victim, exclude_caster_king=True)
         if not any(m["from"] == src and m["to"] == dst for m in moves):
             return [], "not a legal choice"
-        # Apply as if the victim made the move.
-        # Clear the flag first so make_move's regular path runs.
-        victim.opp_moves_chosen_by_me_next_turn = False
-        # Drop any pending choose_opp_move prompt for the caster.
+        # Drop the prompt and apply the chosen move directly. We don't go
+        # through make_move because that enforces turn ownership.
         self.pending_prompts = {
             k: v for k, v in self.pending_prompts.items() if v.kind != "choose_opp_move"
         }
-        return self.make_move(victim.seat, src, dst, promote)
+        return self._apply_forced_opp_move(victim.seat, src, dst, promote)
+
+    def _apply_forced_opp_move(self, victim_seat: str, src: str, dst: str,
+                                promote: str | None) -> tuple[list[dict], str | None]:
+        victim = self.player_by_seat(victim_seat)
+        assert victim
+        modular = victim.modular_board_this_turn
+        piece = self.board.at(src)
+        if piece is None or piece.color != victim_seat:
+            return [], "no piece of victim's on source"
+        legal = set(self.board.legal_destinations(src, modular=modular))
+        if dst not in legal:
+            return [], "illegal move"
+        promote_kind = promote if promote in ("queen", "rook", "bishop", "knight") else None
+        move = Move(src=src, dst=dst, promote=promote_kind)  # type: ignore[arg-type]
+        if piece.kind == "pawn":
+            last_rank = "8" if piece.color == "white" else "1"
+            if dst[1] == last_rank and move.promote is None:
+                move.promote = "queen"  # type: ignore[assignment]
+        result = self.board.apply_move(move, modular=modular)
+        events: list[dict] = [{
+            "kind": "piece_moved", "from": src, "to": dst,
+            "captured": result["captured_kind"],
+        }]
+        if result["captured_kind"] is not None:
+            events.append({
+                "kind": "piece_captured", "sq": result["captured_sq"],
+                "victim_kind": result["captured_kind"],
+                "victim_color": result["captured_color"],
+            })
+        if result["promoted"]:
+            events.append({"kind": "piece_promoted", "sq": dst, "to": result["promoted"]})
+        if result["king_captured"]:
+            # Should be unreachable — _legal_moves_for_opp_chooser excludes
+            # any move that captures the caster's king. Belt-and-braces.
+            self.phase = Phase.DONE
+            self.winner = victim_seat
+            self.win_reason = "king_capture"
+            events.append({"kind": "king_captured", "winner": victim_seat})
+        self._log(f"{victim_seat} forced: {src}-{dst}")
+        return events, None
 
     def _player_has_any_legal_move(self, player: Player) -> bool:
         modular = player.modular_board_this_turn
@@ -1032,10 +1211,29 @@ class Room:
         hand: list[dict] = []
         opp_hand_size = 0
         if viewer is not None and viewer.seat in ("white", "black"):
-            you = {"seat": viewer.seat, "name": viewer.name}
-            hand = viewer.hand_to_json(lambda c: self.can_afford(viewer, c))
+            you = {"seat": viewer.seat, "name": viewer.name,
+                   "echo_free_instance_id": viewer.echo_free_instance_id}
+            # Echo-stolen card is free; reflect that in `playable`.
+            def _afford(c, _v=viewer):
+                if _v.echo_free_instance_id is not None and c.instance_id == _v.echo_free_instance_id:
+                    return self.phase == Phase.PLAYING and _v.seat == self.active_seat
+                return self.can_afford(_v, c)
+            hand = [
+                {**c.to_json(slot=i, playable=_afford(c)),
+                 "instance_id": c.instance_id}
+                for i, c in enumerate(viewer.hand)
+            ]
             opp = self.opponent_of(viewer.seat)
             opp_hand_size = len(opp.hand) if opp else 0
+        # Check status: each side flagged if their king is currently attacked.
+        # Uses the active player's modular flag only if it's their king being
+        # checked — opponent's king on opp's own turn would use opp's flag, but
+        # we don't really need that subtlety because check between turns uses
+        # the standard board.
+        active_player = self.player_by_seat(self.active_seat) if self.phase == Phase.PLAYING else None
+        modular = bool(active_player and active_player.modular_board_this_turn)
+        white_check = self.board.is_in_check("white", modular=modular)
+        black_check = self.board.is_in_check("black", modular=modular)
         snap = {
             "type": "state",
             "phase": self.phase.value,
@@ -1049,6 +1247,8 @@ class Room:
             ),
             "white": self.player_state(white) if white else None,
             "black": self.player_state(black) if black else None,
+            "white_in_check": white_check,
+            "black_in_check": black_check,
             "board": self.board.to_state(),
             "hand": hand,
             "opp_hand_size": opp_hand_size,
@@ -1056,6 +1256,16 @@ class Room:
             "winner": self.winner,
             "win_reason": self.win_reason,
             "pending_prompt": None,
+            "can_undo": (
+                self.undo_snapshot is not None
+                and viewer is not None
+                and viewer.seat == self.active_seat
+                and self.phase == Phase.PLAYING
+            ),
+            "annotations": {
+                "white": sorted(self.annotations["white"]),
+                "black": sorted(self.annotations["black"]),
+            },
         }
         # Surface any pending prompt for this viewer (Echo's pick_opp_hand,
         # choose_opp_move, etc.).

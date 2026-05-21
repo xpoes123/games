@@ -243,10 +243,34 @@ button.warn { border-color: var(--warn); color: var(--warn); }
   background: var(--accent);
   opacity: 0.45;
 }
+.sq.move-capture {
+  box-shadow: inset 0 0 0 3px var(--bad);
+  cursor: pointer;
+}
 .sq.marked-target {
   outline: 2px solid var(--good);
   outline-offset: -2px;
 }
+.sq.in-check {
+  background: rgba(247, 118, 142, 0.45) !important;
+  box-shadow: inset 0 0 0 2px var(--bad);
+}
+.piece.sick {
+  opacity: 0.55;
+  filter: grayscale(0.4);
+}
+.sq.anno-mine, .sq.anno-opp {
+  position: relative;
+}
+.sq.anno-mine::before, .sq.anno-opp::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  pointer-events: none;
+  border: 2px solid var(--accent-2);
+  border-radius: 4px;
+}
+.sq.anno-opp::before { border-color: var(--warn); }
 .sq.king-flash {
   background: var(--bad) !important;
   transition: background 100ms linear;

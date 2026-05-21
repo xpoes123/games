@@ -73,8 +73,10 @@ CARD_DEFS: list[CardDef] = [
             ("friendly_pawn", "empty_square_back2")),
     CardDef("spell_remove_minor", "Remove a Minor (Draw 1)", 4, "spell", 2, "spell_remove_minor",
             ("any_knight_or_bishop",)),
+    # Opponent picks Knight or Bishop — handled via a pending prompt to the
+    # opponent rather than a caster-side modal.
     CardDef("spell_forced_promotion", "Forced Promotion", 4, "spell", 2,
-            "spell_forced_promotion", ("friendly_pawn",), modal=("Knight", "Bishop")),
+            "spell_forced_promotion", ("friendly_pawn",)),
 
     # ---- 5-gold (4) ----
     CardDef("spell_discard_draw", "Discard for Draw", 5, "spell", 2, "spell_discard_draw",
