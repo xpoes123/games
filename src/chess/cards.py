@@ -46,7 +46,7 @@ CARD_DEFS: list[CardDef] = [
     # ---- 1-gold spells (6) ----
     CardDef("spell_extra_pawn_move", "Extra Pawn Step", 1, "spell", 2,
             "spell_extra_pawn_move", ("friendly_pawn",)),
-    CardDef("spell_gain_2_gold", "Gain 2 Gold", 1, "spell", 2, "spell_gain_2_gold"),
+    CardDef("spell_gain_2_gold", "Gain 1 Gold", 0, "spell", 2, "spell_gain_2_gold"),
     CardDef("spell_draw_2", "Draw 2", 1, "spell", 2, "spell_draw_2"),
 
     # ---- 2-gold (8) ----
@@ -110,7 +110,8 @@ CARD_DEFS: list[CardDef] = [
 
     # ---- 9-gold (6) ----
     CardDef("spell_wipe_type", "Wipe Type", 9, "spell", 2, "spell_wipe_type",
-            modal=("Pawn", "Knight", "Bishop", "Rook", "Queen")),
+            modal=("Pawn", "Knight", "Bishop", "Rook", "Queen"),
+            tags=("no_king_capture",)),
     CardDef("spell_draw_full_no_move", "Draw to Full (No Move)", 9, "spell", 2,
             "spell_draw_full_no_move"),
     CardDef("spell_choose_opp_move", "Choose Opponent Move", 9, "spell", 2,

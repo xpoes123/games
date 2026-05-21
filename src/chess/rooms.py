@@ -385,17 +385,25 @@ class Room:
         if err:
             return [], err
 
+        # Snapshot pre-card state so the player can undo this play.
+        # Cards that emit a cross-player prompt (Forced Promotion, Echo)
+        # opt out below — once the opponent has been given information, an
+        # undo would be a free peek-and-back-out.
+        self.undo_snapshot = self._snapshot_for_undo(seat)
         # Charge gold, remove card from hand
         p.gold -= effective_cost
         p.hand.pop(slot)
         if echo_free_now:
             p.echo_free_instance_id = None
-        # Cards commit irreversibly — invalidate any prior undo snapshot.
-        self.undo_snapshot = None
+
+        # Forced Promotion + Echo emit prompts to the opposing player and
+        # are no longer undoable (an undo would let the caster peek-and-back-out).
+        # We invalidate the snapshot we just took at the start of these blocks.
 
         # Forced Promotion: the opponent picks Knight or Bishop (not the
         # caster). Hold the spell mid-resolution and prompt the opponent.
         if card.defn.id == "spell_forced_promotion":
+            self.undo_snapshot = None
             opp = self.opponent_of(seat)
             if opp is None:
                 p.gold += effective_cost
@@ -415,6 +423,7 @@ class Room:
         # walks the caster through opp's hand. apply_echo_pick finishes the
         # spell once they pick a slot.
         if card.defn.id == "spell_echo":
+            self.undo_snapshot = None
             opp = self.opponent_of(seat)
             if opp is None or not opp.hand:
                 # Refund — nothing to steal.
@@ -457,6 +466,12 @@ class Room:
             self.pending_card_play = None
             return [], f"effect not implemented: {exc}"
         self.pending_card_play = None
+
+        # If the card staged a prompt that reveals private info (currently
+        # only choose_opp_move shows the victim's legal moves), undo is no
+        # longer safe — would be a free peek.
+        if any(pr.kind == "choose_opp_move" for pr in self.pending_prompts.values()):
+            self.undo_snapshot = None
 
         # Apply card tag side-effects after resolution.
         if "counts_as_move" in card.defn.tags:
@@ -668,6 +683,10 @@ class Room:
                 return "target must be one of your pieces"
             if not self.board.is_empty(dst or ""):
                 return "destination must be empty"
+            # Pawns can't be teleported onto rank 1 or 8 — promotion would be
+            # bypassed and a back-rank pawn does nothing useful.
+            if pc.kind == "pawn" and dst and dst[1] in ("1", "8"):
+                return "pawns can't be teleported to rank 1 or 8"
             return None
 
         if key == "spell_discard_draw":
@@ -762,6 +781,7 @@ class Room:
 
     def _snapshot_for_undo(self, seat: str) -> dict:
         p = self.player_by_seat(seat)
+        opp = self.opponent_of(seat)
         assert p
         squares = {
             sq: Piece(pc.color, pc.kind, has_moved=pc.has_moved,
@@ -771,11 +791,26 @@ class Room:
         return {
             "squares": squares,
             "ep_target": self.board.ep_target,
+            "gold": p.gold,
+            "hand": list(p.hand),
+            "deck": list(p.deck),
+            "opp_hand": list(opp.hand) if opp else [],
+            "opp_gold": opp.gold if opp else 0,
             "moves_remaining": p.moves_remaining,
             "has_acted_this_turn": p.has_acted_this_turn,
             "triple_move_used": set(p.triple_move_used),
+            "triple_move_active": p.triple_move_active,
             "extra_pawn_squares": dict(p.extra_pawn_squares),
             "pawn_back_pawn_sq": p.pawn_back_pawn_sq,
+            "pawn_two_moves_armed": p.pawn_two_moves_armed,
+            "pieces_free_this_turn": p.pieces_free_this_turn,
+            "no_chess_move_this_turn": p.no_chess_move_this_turn,
+            "cannot_capture_king_this_turn": p.cannot_capture_king_this_turn,
+            "modular_board_this_turn": p.modular_board_this_turn,
+            "echo_free_instance_id": p.echo_free_instance_id,
+            "spell_tax_next_turn_opp": opp.spell_tax_next_turn if opp else 0,
+            "opp_chosen_flag": opp.opp_moves_chosen_by_me_next_turn if opp else False,
+            "extra_turn_queued": p.extra_turn_queued,
             "log_len": len(self.log),
         }
 
@@ -790,18 +825,41 @@ class Room:
             return "nothing to undo"
         snap = self.undo_snapshot
         p = self.player_by_seat(seat)
+        opp = self.opponent_of(seat)
         assert p
         self.board.squares = snap["squares"]
         self.board.ep_target = snap["ep_target"]
+        # Card-play snapshots also restore hand/deck/gold; move-only snapshots
+        # left these unchanged but the snapshot still has consistent values.
+        p.gold = snap["gold"]
+        p.hand = list(snap["hand"])
+        p.deck = list(snap["deck"])
+        if opp:
+            opp.hand = list(snap["opp_hand"])
+            opp.gold = snap["opp_gold"]
+            opp.spell_tax_next_turn = snap["spell_tax_next_turn_opp"]
+            opp.opp_moves_chosen_by_me_next_turn = snap["opp_chosen_flag"]
         p.moves_remaining = snap["moves_remaining"]
         p.has_acted_this_turn = snap["has_acted_this_turn"]
         p.triple_move_used = snap["triple_move_used"]
+        p.triple_move_active = snap["triple_move_active"]
         p.extra_pawn_squares = snap["extra_pawn_squares"]
         p.pawn_back_pawn_sq = snap["pawn_back_pawn_sq"]
+        p.pawn_two_moves_armed = snap["pawn_two_moves_armed"]
+        p.pieces_free_this_turn = snap["pieces_free_this_turn"]
+        p.no_chess_move_this_turn = snap["no_chess_move_this_turn"]
+        p.cannot_capture_king_this_turn = snap["cannot_capture_king_this_turn"]
+        p.modular_board_this_turn = snap["modular_board_this_turn"]
+        p.echo_free_instance_id = snap["echo_free_instance_id"]
+        p.extra_turn_queued = snap["extra_turn_queued"]
         while len(self.log) > snap["log_len"]:
             self.log.pop()
+        # After-undo, also drop any pending prompts created by the undone
+        # action (e.g., an Echo pick_opp_hand that was just staged).
+        self.pending_prompts.clear()
+        self.pending_card_play = None
         self.undo_snapshot = None
-        self._log(f"{seat} undoes last move")
+        self._log(f"{seat} undoes last action")
         return None
 
     def toggle_annotation(self, seat: str, sq: str) -> None:

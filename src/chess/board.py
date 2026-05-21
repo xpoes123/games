@@ -356,3 +356,9 @@ def opponent_2nd_rank(color: Color) -> list[str]:
 
 
 CENTRAL_4 = ["d4", "d5", "e4", "e5"]
+
+
+def is_pawn_starting_rank(color: Color, sq: str) -> bool:
+    """True if `sq` is the 2-step-eligible starting rank for a pawn of
+    this color (rank 2 for white, rank 7 for black)."""
+    return (color == "white" and sq[1] == "2") or (color == "black" and sq[1] == "7")

@@ -25,7 +25,7 @@ const CARD_EFFECTS = {
   piece_queen: "Place a queen in your back two ranks.",
   piece_any: "Pick a piece kind, pay its cost, place in your back two ranks.",
   spell_extra_pawn_move: "Target pawn gets one extra forward step this turn.",
-  spell_gain_2_gold: "Gain 2 gold this turn (no cap raise).",
+  spell_gain_2_gold: "Free. Gain 1 gold this turn (does not exceed your gold cap).",
   spell_draw_2: "Draw 2 cards.",
   spell_pawn_back_or_two_moves: "Choose: pawn moves backward OR two pawn moves this turn.",
   spell_play_2_pawns: "Place 2 pawns in your back two ranks.",
@@ -48,7 +48,7 @@ const CARD_EFFECTS = {
   spell_rook_and_minor: "Place a rook AND a Knight/Bishop (modal) in your back two ranks.",
   spell_deploy_enemy_rank: "Place a Pawn or Rook on opponent's 2nd/7th rank.",
   spell_eight_or_eight: "Up to 8 pawns OR pieces totaling exactly 8 in your back two ranks.",
-  spell_wipe_type: "Pick a piece kind; remove every piece of that kind (both sides).",
+  spell_wipe_type: "Pick a piece kind; remove every piece of that kind (both sides). Cannot capture king this turn.",
   spell_draw_full_no_move: "Draw to hand cap. Cannot make a chess move this turn.",
   spell_choose_opp_move: "Pick one of opponent's currently-legal moves; it resolves immediately.",
   spell_draw_rook_extra: "Draw 4; place a rook; gain an extra move. Cannot checkmate.",
@@ -123,7 +123,6 @@ let lastName = null;
 
 // Active targeting "play" — full client-side walk.
 let casting = null;
-let hoverSq = null;          // hovered friendly piece during own turn — preview legal moves
 /* casting shape:
  {
    slot, card,
@@ -466,7 +465,7 @@ const CARD_NAMES = {
   piece_queen: { name: "Queen", cost: 8 },
   piece_any: { name: "Any Piece", cost: -1 },
   spell_extra_pawn_move: { name: "Extra Pawn Step", cost: 1 },
-  spell_gain_2_gold: { name: "Gain 2 Gold", cost: 1 },
+  spell_gain_2_gold: { name: "Gain 1 Gold", cost: 0 },
   spell_draw_2: { name: "Draw 2", cost: 1 },
   spell_pawn_back_or_two_moves: { name: "Pawn Back / Two Moves", cost: 2 },
   spell_play_2_pawns: { name: "Play 2 Pawns", cost: 2 },
@@ -652,19 +651,14 @@ function renderBoard(pieces, youSeat) {
 
   const validTargets = casting ? validSquaresForCurrentStep(byKey) : null;
 
-  // Legal move highlights: prefer the selected piece; otherwise show a
-  // hover preview if the cursor is over one of your own movable pieces.
+  // Legal move highlights for the currently-selected friendly piece
+  // (only when not mid-cast and only on your own turn).
   const myTurn = lastState && lastState.phase === "PLAYING" && lastState.active_seat === youSeat;
   let moveTargets = null;
-  let movePieceSq = null;
-  if (!casting && myTurn) {
-    const showSq = selectedSq || hoverSq;
-    if (showSq) {
-      const pc = byKey.get(showSq);
-      if (pc && pc.color === youSeat && !pc.placed_this_turn) {
-        moveTargets = legalDestinations(showSq, byKey, youSeat);
-        movePieceSq = showSq;
-      }
+  if (!casting && selectedSq && myTurn) {
+    const pc = byKey.get(selectedSq);
+    if (pc && pc.color === youSeat && !pc.placed_this_turn) {
+      moveTargets = legalDestinations(selectedSq, byKey, youSeat);
     }
   }
 
@@ -717,7 +711,6 @@ function renderBoard(pieces, youSeat) {
       }
 
       if (selectedSq === sq) cell.classList.add("selected");
-      else if (movePieceSq === sq && hoverSq === sq) cell.classList.add("hover-src");
       if (checkedSquares.has(sq)) cell.classList.add("in-check");
 
       if (validTargets && validTargets.has(sq)) {
@@ -742,8 +735,6 @@ function renderBoard(pieces, youSeat) {
       if (oppAnno.has(sq)) cell.classList.add("anno-opp");
 
       cell.addEventListener("click", () => onSquareClick(sq, byKey));
-      cell.addEventListener("mouseenter", () => onSquareHover(sq, byKey));
-      cell.addEventListener("mouseleave", () => onSquareHover(null, byKey));
       boardEl.appendChild(cell);
     }
   }
@@ -1083,19 +1074,6 @@ function frToSq(f, r) {
 
 // ---- chess move (board interaction) ----
 
-function onSquareHover(sq, byKey) {
-  if (!lastState || lastState.phase !== "PLAYING") return;
-  if (casting) return;
-  // Only preview if it's your turn and the hovered square has one of your
-  // own movable pieces. Hover preview shouldn't fight with a click-selected
-  // piece — if something is selected, we leave hoverSq null and the
-  // selected-piece path drives the highlights.
-  const want = (sq && lastState.active_seat === mySeat && !selectedSq) ? sq : null;
-  if (want === hoverSq) return;
-  hoverSq = want;
-  renderBoardOnly();
-}
-
 function onSquareClick(sq, byKey) {
   if (!lastState) return;
   const s = lastState;
@@ -1428,11 +1406,18 @@ function validSquaresForCurrentStep(byKey) {
     case "empty_square_central4":
       for (const sq of ["d4","d5","e4","e5"]) if (!byKey.has(sq)) set.add(sq);
       break;
-    case "any_empty_square":
+    case "any_empty_square": {
+      // Teleport pawn restriction: exclude rank 1 / 8 when the picked piece
+      // (step 0) is a pawn.
+      const stepZero = casting.targets[0];
+      const stepZeroPiece = stepZero && byKey.get(stepZero.square);
+      const isPawnTeleport = c.card_id === "spell_teleport" && stepZeroPiece && stepZeroPiece.kind === "pawn";
       for (let f = 0; f < 8; f++) for (let r = 0; r < 8; r++) {
+        if (isPawnTeleport && (r === 0 || r === 7)) continue;
         const sq = frToSq(f, r); if (!byKey.has(sq)) set.add(sq);
       }
       break;
+    }
     case "friendly_pawn": {
       // exclude already-picked pawns (for combine_pawns 3-pick)
       const picked = new Set(casting.targets.slice(0, casting.step).map(t => t.square));

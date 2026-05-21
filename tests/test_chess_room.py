@@ -160,11 +160,13 @@ def test_gain_2_gold_effect():
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
     white.hand.insert(0, Card(instance_id="g2", defn=CARDS_BY_ID["spell_gain_2_gold"]))
-    pre = white.gold
+    # Bump cap so the +1 actually shows; on turn 1 we'd cap at 1 already.
+    white.gold_cap = 5
+    white.gold = 2
     events, err = r.play_card("white", 0, [], None, [])
     assert err is None
-    # Paid 1, gained 2 → net +1
-    assert white.gold == pre + 1
+    # Cost 0, gain 1 (capped at gold_cap) → net +1.
+    assert white.gold == 3
 
 
 def test_spell_tax_opponent_applies_next_turn():
