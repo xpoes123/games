@@ -32,6 +32,40 @@ def test_room_pairs_white_and_black_on_join():
     assert len(p2.hand) == 4
 
 
+def test_setup_phase_places_starting_material():
+    r = Room(code="TEST", rng=random.Random(7))
+    w = r.add_player("W")
+    b = r.add_player("B")
+    r.submit_mulligan("white", [])
+    r.submit_mulligan("black", [])
+    assert r.phase == Phase.SETUP
+    # Exactly-8 enforcement.
+    assert r.setup_confirm("white") == "must spend exactly 8 points"
+    # Wrong zone for pawn (rank 4 is not the pawn zone).
+    assert r.setup_place("white", "pawn", "a4") is not None
+    # Pawn on rank 3 is fine.
+    assert r.setup_place("white", "pawn", "a3") is None
+    # Place a queen — totals 1 + 8 = 9, should be rejected.
+    assert r.setup_place("white", "queen", "d1") == "would exceed 8 points"
+    # Replace the pawn with a queen (exactly 8).
+    r.setup_remove("white", "a3")
+    assert r.setup_place("white", "queen", "d1") is None
+    # Black places 8 pawns.
+    for f in "abcdefgh":
+        r.setup_place("black", "pawn", f + "7")
+    # Confirm white.
+    assert r.setup_confirm("white") is None
+    # Black hasn't confirmed → still SETUP.
+    assert r.phase == Phase.SETUP
+    # White's queen isn't on board yet (hidden until both confirm).
+    assert r.board.at("d1") is None
+    # Black confirms → board reveals + PLAYING.
+    assert r.setup_confirm("black") is None
+    assert r.phase == Phase.PLAYING
+    assert r.board.at("d1").kind == "queen"
+    assert r.board.at("a7").kind == "pawn"
+
+
 def test_mulligan_redraw_keeps_hand_size():
     r = Room(code="TEST", rng=random.Random(7))
     p1 = r.add_player("A")
@@ -43,6 +77,9 @@ def test_mulligan_redraw_keeps_hand_size():
     assert r.phase == Phase.MULLIGAN
     err2 = r.submit_mulligan("black", [])
     assert err2 is None
+    # After both mulligans → SETUP phase (pre-game material placement).
+    assert r.phase == Phase.SETUP
+    r.test_skip_setup()
     assert r.phase == Phase.PLAYING
 
 
@@ -52,6 +89,7 @@ def test_full_game_pawn_placement_and_king_capture():
     black = r.add_player("B")
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
+    r.test_skip_setup()
     assert r.phase == Phase.PLAYING
 
     # Force a known sequence: give white a queen card (cost 8 — too expensive
@@ -76,6 +114,7 @@ def test_play_pawn_card_and_capture_king_full_path():
     black = r.add_player("B")
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
+    r.test_skip_setup()
 
     # Ensure white has a Pawn (cost 1) at slot 0
     pawn_slot = _give(white, "piece_pawn", 1)
@@ -103,6 +142,7 @@ def test_cannot_play_when_not_your_turn():
     black = r.add_player("B")
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
+    r.test_skip_setup()
     black.hand.append(Card(instance_id="x", defn=CARDS_BY_ID["piece_pawn"]))
     events, err = r.play_card("black", len(black.hand) - 1, [{"square": "a7"}], None, [])
     assert err is not None
@@ -115,6 +155,7 @@ def test_cannot_afford_card():
     r.add_player("B")
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
+    r.test_skip_setup()
     # Queen costs 8; white starts at 1 gold.
     white.hand.insert(0, Card(instance_id="q", defn=CARDS_BY_ID["piece_queen"]))
     events, err = r.play_card("white", 0, [{"square": "a1"}], None, [])
@@ -127,6 +168,7 @@ def test_end_turn_advances_seat_and_upkeeps():
     r.add_player("B")
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
+    r.test_skip_setup()
     assert r.active_seat == "white"
     # must-move rule: make any legal move first
     r.make_move("white", "e1", "e2", None)
@@ -145,6 +187,7 @@ def test_draw_2_card_effect():
     r.add_player("B")
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
+    r.test_skip_setup()
     white.hand.insert(0, Card(instance_id="d2", defn=CARDS_BY_ID["spell_draw_2"]))
     pre = len(white.hand)
     events, err = r.play_card("white", 0, [], None, [])
@@ -159,6 +202,7 @@ def test_gain_2_gold_effect():
     r.add_player("B")
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
+    r.test_skip_setup()
     white.hand.insert(0, Card(instance_id="g2", defn=CARDS_BY_ID["spell_gain_2_gold"]))
     # Bump cap so the +1 actually shows; on turn 1 we'd cap at 1 already.
     white.gold_cap = 5
@@ -175,6 +219,7 @@ def test_spell_tax_opponent_applies_next_turn():
     black = r.add_player("B")
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
+    r.test_skip_setup()
     white.gold = 10
     white.hand.insert(0, Card(instance_id="tax", defn=CARDS_BY_ID["spell_tax_opponent"]))
     events, err = r.play_card("white", 0, [], None, [])

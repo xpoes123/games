@@ -54,8 +54,13 @@ MAX_MOVES_PER_TURN = 4
 class Phase(str, Enum):
     LOBBY = "LOBBY"
     MULLIGAN = "MULLIGAN"
+    SETUP = "SETUP"
     PLAYING = "PLAYING"
     DONE = "DONE"
+
+
+SETUP_POINTS = 8
+SETUP_MATERIAL_VALUE = {"pawn": 1, "knight": 2, "bishop": 3, "rook": 5, "queen": 8}
 
 
 Seat = Literal["white", "black", "spectator"]
@@ -93,6 +98,10 @@ class Player:
     # instance_id (slot indices shift as cards are played). Consumed on the
     # matching play_card, cleared at end-of-turn.
     echo_free_instance_id: str | None = None
+    # Pre-game setup phase: each player picks their own 8-point starting
+    # material. Hidden from opponent until both confirm. List of {kind, sq}.
+    setup_picks: list[dict] = field(default_factory=list)
+    setup_confirmed: bool = False
 
     def hand_to_json(self, can_afford_fn) -> list[dict]:
         return [c.to_json(slot=i, playable=can_afford_fn(c)) for i, c in enumerate(self.hand)]
@@ -238,8 +247,106 @@ class Room:
         white = self.player_by_seat("white")
         black = self.player_by_seat("black")
         if white and black and white.mulligan_done and black.mulligan_done:
+            self._begin_setup()
+        return None
+
+    # ---- setup (pre-game material placement) ----
+
+    def _begin_setup(self) -> None:
+        self.phase = Phase.SETUP
+        self._log("setup — place 8 points of material (hidden until both confirm)")
+
+    def _setup_zone(self, seat: str, kind: str) -> list[str]:
+        if kind == "pawn":
+            return pawn_placement_ranks(seat)  # type: ignore[arg-type]
+        return back_two_ranks(seat)  # type: ignore[arg-type]
+
+    def _setup_points_total(self, picks: list[dict]) -> int:
+        return sum(SETUP_MATERIAL_VALUE.get(p["kind"], 0) for p in picks)
+
+    def setup_place(self, seat: str, kind: str, square: str) -> str | None:
+        if self.phase != Phase.SETUP:
+            return "not in setup phase"
+        p = self.player_by_seat(seat)
+        if p is None:
+            return "no such seat"
+        if p.setup_confirmed:
+            return "already confirmed"
+        if kind not in SETUP_MATERIAL_VALUE:
+            return "bad piece kind"
+        zone = self._setup_zone(seat, kind)
+        if square not in zone:
+            return ("pawns place on your 2nd/3rd rank"
+                    if kind == "pawn"
+                    else "non-pawn pieces place on your back two ranks")
+        # The king occupies its starting square — block placing on it.
+        if self.board.at(square) is not None:
+            return "square occupied"
+        if any(pk["square"] == square for pk in p.setup_picks):
+            return "you already placed there"
+        new_total = self._setup_points_total(p.setup_picks) + SETUP_MATERIAL_VALUE[kind]
+        if new_total > SETUP_POINTS:
+            return f"would exceed {SETUP_POINTS} points"
+        p.setup_picks.append({"kind": kind, "square": square})
+        return None
+
+    def setup_remove(self, seat: str, square: str) -> str | None:
+        if self.phase != Phase.SETUP:
+            return "not in setup phase"
+        p = self.player_by_seat(seat)
+        if p is None:
+            return "no such seat"
+        if p.setup_confirmed:
+            return "already confirmed"
+        before = len(p.setup_picks)
+        p.setup_picks = [pk for pk in p.setup_picks if pk["square"] != square]
+        if len(p.setup_picks) == before:
+            return "nothing to remove"
+        return None
+
+    def setup_confirm(self, seat: str) -> str | None:
+        if self.phase != Phase.SETUP:
+            return "not in setup phase"
+        p = self.player_by_seat(seat)
+        if p is None:
+            return "no such seat"
+        if p.setup_confirmed:
+            return "already confirmed"
+        if self._setup_points_total(p.setup_picks) != SETUP_POINTS:
+            return f"must spend exactly {SETUP_POINTS} points"
+        p.setup_confirmed = True
+        white = self.player_by_seat("white")
+        black = self.player_by_seat("black")
+        if white and black and white.setup_confirmed and black.setup_confirmed:
+            self._apply_setup_to_board()
             self._begin_playing()
         return None
+
+    def test_skip_setup(self) -> None:
+        """Test-only convenience: skip the pre-game material placement phase
+        and jump straight to PLAYING with empty starting boards (kings only)."""
+        white = self.player_by_seat("white")
+        black = self.player_by_seat("black")
+        if white:
+            white.setup_picks = []
+            white.setup_confirmed = True
+        if black:
+            black.setup_picks = []
+            black.setup_confirmed = True
+        self._begin_playing()
+
+    def _apply_setup_to_board(self) -> None:
+        from src.chess.effects import _make_placed_piece
+        for seat in ("white", "black"):
+            p = self.player_by_seat(seat)
+            if p is None:
+                continue
+            for pk in p.setup_picks:
+                piece = _make_placed_piece(seat, pk["kind"], pk["square"])
+                # Starting material is NOT summoning-sick — players can move on turn 1.
+                piece.placed_this_turn = False
+                self.board.place(pk["square"], piece)
+            p.setup_picks = []
 
     def _begin_playing(self) -> None:
         self.phase = Phase.PLAYING
@@ -1238,6 +1345,8 @@ class Room:
             p.extra_turn_queued = False
             p.extra_turn_no_capture_king = False
             p.opp_moves_chosen_by_me_next_turn = False
+            p.setup_picks = []
+            p.setup_confirmed = False
         if "white" in self.seats and "black" in self.seats:
             self._begin_mulligan()
         else:
@@ -1284,7 +1393,10 @@ class Room:
             deck_cards.sort(key=lambda d: (d["cost"], d["name"]))
             you = {"seat": viewer.seat, "name": viewer.name,
                    "echo_free_instance_id": viewer.echo_free_instance_id,
-                   "deck_cards": deck_cards}
+                   "deck_cards": deck_cards,
+                   "setup_picks": list(viewer.setup_picks),
+                   "setup_points": self._setup_points_total(viewer.setup_picks),
+                   "setup_confirmed": viewer.setup_confirmed}
             # Echo-stolen card is free; reflect that in `playable`.
             def _afford(c, _v=viewer):
                 if _v.echo_free_instance_id is not None and c.instance_id == _v.echo_free_instance_id:
@@ -1319,6 +1431,8 @@ class Room:
             ),
             "white": self.player_state(white) if white else None,
             "black": self.player_state(black) if black else None,
+            "white_setup_confirmed": bool(white and white.setup_confirmed),
+            "black_setup_confirmed": bool(black and black.setup_confirmed),
             "white_in_check": white_check,
             "black_in_check": black_check,
             "board": self.board.to_state(),

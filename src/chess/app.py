@@ -274,6 +274,41 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
         await _broadcast_state(room)
         return
 
+    if action == "setup_place":
+        kind = msg.get("kind")
+        sq = msg.get("square")
+        if not isinstance(kind, str) or not isinstance(sq, str):
+            return
+        async with room.lock:
+            err = room.setup_place(player.seat, kind, sq)
+        if err:
+            await _send(player, {"type": "error", "text": err})
+            return
+        await _broadcast_state(room)
+        return
+
+    if action == "setup_remove":
+        sq = msg.get("square")
+        if not isinstance(sq, str):
+            return
+        async with room.lock:
+            err = room.setup_remove(player.seat, sq)
+        if err:
+            await _send(player, {"type": "error", "text": err})
+            return
+        await _broadcast_state(room)
+        return
+
+    if action == "setup_confirm":
+        async with room.lock:
+            err = room.setup_confirm(player.seat)
+        if err:
+            await _send(player, {"type": "error", "text": err})
+            return
+        await _broadcast_state(room)
+        await _arm_turn_timer(room)
+        return
+
     if action == "play_card":
         slot = msg.get("slot")
         targets = msg.get("targets") or []

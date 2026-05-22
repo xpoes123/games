@@ -15,6 +15,8 @@ const PIECE_FROM_CARD = {
 };
 const PIECE_COSTS = { pawn: 1, knight: 2, bishop: 3, rook: 5, queen: 8 };
 const MATERIAL_POINTS = { pawn: 1, knight: 2, bishop: 3, rook: 5, queen: 8 };
+const SETUP_POINTS = 8;
+let setupKind = "pawn";   // current setup-phase piece picker selection
 
 // One-liner effect descriptions for tooltips.
 const CARD_EFFECTS = {
@@ -752,6 +754,10 @@ function render() {
       mulliganBtn.hidden = false;
       mulliganBtn.textContent = `Replace ${mulliganMarks.size} cards`;
     }
+  } else if (s.phase === "SETUP") {
+    endTurnBtn.hidden = true;
+    mulliganBtn.hidden = true;
+    mulliganWait.hidden = true;
   } else {
     endTurnBtn.hidden = false;
     mulliganBtn.hidden = true;
@@ -832,6 +838,17 @@ function renderBoard(pieces, youSeat) {
   const flip = youSeat === "black";
   const byKey = new Map();
   for (const p of pieces) byKey.set(p.sq, p);
+  // During SETUP, merge in your own picks as ghosts so you can see them.
+  // Opponent's picks stay hidden (server doesn't expose them).
+  const setupPicks = (lastState && lastState.phase === "SETUP"
+                      && lastState.you && lastState.you.setup_picks) || [];
+  const setupSet = new Set();
+  for (const pk of setupPicks) {
+    byKey.set(pk.square, { sq: pk.square, kind: pk.kind, color: youSeat,
+                           setup_ghost: true, has_moved: false,
+                           placed_this_turn: false });
+    setupSet.add(pk.square);
+  }
   lastBoardMap = byKey;
 
   const validTargets = casting ? validSquaresForCurrentStep(byKey) : null;
@@ -891,8 +908,18 @@ function renderBoard(pieces, youSeat) {
         const g = document.createElement("span");
         g.className = `piece ${pc.color}`;
         if (pc.placed_this_turn) g.classList.add("sick");
+        if (pc.setup_ghost) g.classList.add("setup-ghost");
         g.textContent = PIECE_GLYPH[pc.color][pc.kind];
         cell.appendChild(g);
+      }
+      // Setup-phase placement-zone hint for the active kind.
+      if (lastState && lastState.phase === "SETUP" && lastState.you
+          && !lastState.you.setup_confirmed) {
+        const zone = setupKind === "pawn"
+          ? pawnZoneSquares(youSeat)
+          : backTwoSquares(youSeat);
+        if (zone.includes(sq) && !byKey.has(sq)) cell.classList.add("setup-zone");
+        if (setupSet.has(sq)) cell.classList.add("setup-mine");
       }
 
       if (selectedSq === sq) cell.classList.add("selected");
@@ -1003,6 +1030,9 @@ function renderStatusLine(s, youSeat) {
   } else if (s.phase === "LOBBY") msg = "waiting for opponent...";
   else if (s.phase === "MULLIGAN") {
     msg = "mulligan — click cards to mark for redraw, then submit";
+  } else if (s.phase === "SETUP") {
+    msg = "place 8 points of material — hidden from opponent until both confirm";
+    statusLine.classList.add("target");
   } else if (s.phase === "PLAYING") {
     const yourTurn = s.active_seat === youSeat;
     msg = `turn ${s.turn_number} — ${yourTurn ? "your turn" : "opponent's turn"}`;
@@ -1263,6 +1293,17 @@ function onSquareClick(sq, byKey) {
   if (!lastState) return;
   const s = lastState;
   const youSeat = mySeat;
+  if (s.phase === "SETUP") {
+    if (!s.you || s.you.setup_confirmed) return;
+    // Clicking your own pick removes it; clicking an empty zone square places.
+    const picked = (s.you.setup_picks || []).some(pk => pk.square === sq);
+    if (picked) {
+      ws.send(JSON.stringify({ type: "setup_remove", square: sq }));
+      return;
+    }
+    ws.send(JSON.stringify({ type: "setup_place", kind: setupKind, square: sq }));
+    return;
+  }
   if (s.phase !== "PLAYING") return;
 
   // Targeting in progress: handle the click within the targeting machine.
@@ -1793,6 +1834,12 @@ function capitalize(s) { return (s || "").charAt(0).toUpperCase() + s.slice(1); 
 function renderPromptArea() {
   promptArea.innerHTML = "";
 
+  // Setup-phase placement widget.
+  if (lastState && lastState.phase === "SETUP") {
+    renderSetupWidget();
+    return;
+  }
+
   // 1. Server-side prompt (choose_opp_move, mulligan-style etc).
   if (serverPrompt) {
     renderServerPrompt(serverPrompt);
@@ -1809,6 +1856,77 @@ function renderPromptArea() {
   div.className = "side-empty";
   div.textContent = "no active prompt.";
   promptArea.appendChild(div);
+}
+
+function renderSetupWidget() {
+  const you = (lastState && lastState.you) || {};
+  const confirmed = !!you.setup_confirmed;
+  const points = you.setup_points || 0;
+  const remaining = SETUP_POINTS - points;
+  const oppConfirmed = (mySeat === "white")
+    ? lastState.black_setup_confirmed
+    : lastState.white_setup_confirmed;
+
+  const box = document.createElement("div");
+  box.className = "prompt-box";
+
+  const lbl = document.createElement("div");
+  lbl.className = "label";
+  lbl.textContent = "Pre-game setup";
+  box.appendChild(lbl);
+
+  const desc = document.createElement("div");
+  desc.className = "progress";
+  desc.textContent = "Place exactly 8 points of material. Pawns go on your 2nd/3rd rank; other pieces on your back two ranks. Click a placed piece to remove it.";
+  box.appendChild(desc);
+
+  const sum = document.createElement("div");
+  sum.className = "sum" + (points === SETUP_POINTS ? " ok" : "");
+  sum.textContent = `${points} / ${SETUP_POINTS}`;
+  box.appendChild(sum);
+
+  if (!confirmed) {
+    const opts = document.createElement("div");
+    opts.className = "opts";
+    for (const k of ["pawn", "knight", "bishop", "rook", "queen"]) {
+      const v = MATERIAL_POINTS[k];
+      const b = document.createElement("button");
+      b.textContent = `${PIECE_GLYPH[mySeat || "white"][k]} ${capitalize(k)} (${v})`;
+      if (v > remaining) b.disabled = true;
+      if (setupKind === k) b.classList.add("primary");
+      b.addEventListener("click", () => { setupKind = k; render(); });
+      opts.appendChild(b);
+    }
+    box.appendChild(opts);
+
+    const row = document.createElement("div");
+    row.className = "row";
+    const confirm = document.createElement("button");
+    confirm.className = "primary";
+    confirm.textContent = "Confirm setup";
+    confirm.disabled = points !== SETUP_POINTS;
+    confirm.addEventListener("click", () => {
+      ws.send(JSON.stringify({ type: "setup_confirm" }));
+    });
+    row.appendChild(confirm);
+    box.appendChild(row);
+  } else {
+    const waiting = document.createElement("div");
+    waiting.className = "progress";
+    waiting.textContent = oppConfirmed
+      ? "starting..."
+      : "waiting for opponent to confirm setup...";
+    box.appendChild(waiting);
+  }
+
+  // Tiny status hint for opp.
+  const oppStatus = document.createElement("div");
+  oppStatus.className = "progress";
+  oppStatus.textContent = "Opponent: " + (oppConfirmed ? "confirmed" : "still placing");
+  oppStatus.style.color = oppConfirmed ? "var(--good)" : "var(--muted)";
+  box.appendChild(oppStatus);
+
+  promptArea.appendChild(box);
 }
 
 function renderServerPrompt(p) {

@@ -16,6 +16,7 @@ def _setup() -> tuple[Room, "Player", "Player"]:  # type: ignore[name-defined]
     b = r.add_player("B")
     r.submit_mulligan("white", [])
     r.submit_mulligan("black", [])
+    r.test_skip_setup()
     return r, w, b
 
 
