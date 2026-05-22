@@ -91,6 +91,9 @@ const youGoldEl = $("you-gold");
 const youGoldNumEl = $("you-gold-num");
 const youPanelEl = $("you-panel");
 const handEl = $("hand");
+const deckToggleEl = $("you-deck-toggle");
+const deckPanelEl = $("deck-panel");
+let deckOpen = false;
 const endTurnBtn = $("end-turn-btn");
 const undoBtn = $("undo-btn");
 const mulliganBtn = $("mulligan-btn");
@@ -239,6 +242,65 @@ if (soundBtn) {
   });
 }
 
+// Deck-tracker dropdown.
+if (deckToggleEl) {
+  deckToggleEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setDeckOpen(!deckOpen);
+  });
+}
+document.addEventListener("click", (e) => {
+  if (!deckOpen) return;
+  if (deckPanelEl.contains(e.target) || deckToggleEl.contains(e.target)) return;
+  setDeckOpen(false);
+});
+
+function setDeckOpen(v) {
+  deckOpen = v;
+  deckPanelEl.hidden = !v;
+  deckToggleEl.classList.toggle("open", v);
+  if (v) renderDeckPanel();
+}
+
+function renderDeckPanel() {
+  deckPanelEl.innerHTML = "";
+  const cards = (lastState && lastState.you && lastState.you.deck_cards) || [];
+  if (!cards.length) {
+    const e = document.createElement("div");
+    e.className = "deck-panel-empty";
+    e.textContent = "deck is empty";
+    deckPanelEl.appendChild(e);
+    positionDeckPanel();
+    return;
+  }
+  for (const c of cards) {
+    const row = document.createElement("div");
+    row.className = "deck-row";
+    const cost = document.createElement("span");
+    cost.className = "cost";
+    cost.textContent = c.cost === -1 ? "?" : c.cost;
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = c.name;
+    const cnt = document.createElement("span");
+    cnt.className = "count";
+    cnt.textContent = "×" + c.count;
+    row.appendChild(cost);
+    row.appendChild(name);
+    row.appendChild(cnt);
+    deckPanelEl.appendChild(row);
+  }
+  positionDeckPanel();
+}
+
+function positionDeckPanel() {
+  // Anchor the panel just below the deck toggle, left-aligned with it.
+  const tRect = deckToggleEl.getBoundingClientRect();
+  const pRect = youPanelEl.getBoundingClientRect();
+  deckPanelEl.style.left = (tRect.left - pRect.left) + "px";
+  deckPanelEl.style.top = (tRect.bottom - pRect.top + 4) + "px";
+}
+
 copyBtn.addEventListener("click", () => {
   const url = new URL(location.href);
   url.searchParams.set("room", roomLabel.textContent);
@@ -355,6 +417,7 @@ function handleMessage(msg) {
     render();
     maybeAutoEchoCast();
     maybePlayCheckSound();
+    if (deckOpen) renderDeckPanel();
   }
 }
 

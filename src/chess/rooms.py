@@ -1269,8 +1269,22 @@ class Room:
         hand: list[dict] = []
         opp_hand_size = 0
         if viewer is not None and viewer.seat in ("white", "black"):
+            # Deck tracker — your own remaining cards, grouped by card_id,
+            # sorted by cost then name. Only included for the viewer's own
+            # deck (opponent's deck stays hidden).
+            from collections import Counter
+            deck_counter = Counter(c.defn.id for c in viewer.deck)
+            deck_cards = [
+                {"card_id": cid,
+                 "name": CARDS_BY_ID[cid].name,
+                 "cost": CARDS_BY_ID[cid].cost,
+                 "count": cnt}
+                for cid, cnt in deck_counter.items()
+            ]
+            deck_cards.sort(key=lambda d: (d["cost"], d["name"]))
             you = {"seat": viewer.seat, "name": viewer.name,
-                   "echo_free_instance_id": viewer.echo_free_instance_id}
+                   "echo_free_instance_id": viewer.echo_free_instance_id,
+                   "deck_cards": deck_cards}
             # Echo-stolen card is free; reflect that in `playable`.
             def _afford(c, _v=viewer):
                 if _v.echo_free_instance_id is not None and c.instance_id == _v.echo_free_instance_id:
