@@ -167,6 +167,46 @@ async def _broadcast_pending_prompts(room: Room) -> None:
             target.ws = None
 
 
+async def _arm_opp_prompt_timer(room: Room) -> None:
+    """If a Forced Promotion prompt is pending for the opponent, schedule an
+    auto-resolve with the default ('Knight') after OPP_DECISION_BUDGET_MS."""
+    import asyncio
+    from src.chess.rooms import OPP_DECISION_BUDGET_MS
+
+    if room.opp_prompt_task is not None and not room.opp_prompt_task.done():
+        room.opp_prompt_task.cancel()
+    room.opp_prompt_task = None
+    if room.pending_card_play is None:
+        return
+    if room.pending_card_play.card.defn.id != "spell_forced_promotion":
+        return
+    deadline = room.opp_prompt_deadline_ms
+    if deadline is None:
+        return
+    caster_seat = room.pending_card_play.seat
+    opp_seat = "black" if caster_seat == "white" else "white"
+
+    async def _fire() -> None:
+        delay = max(0.0, (deadline - room.now_ms()) / 1000)
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        async with room.lock:
+            if room.pending_card_play is None:
+                return
+            if room.pending_card_play.card.defn.id != "spell_forced_promotion":
+                return
+            events, err = room.apply_forced_promotion_pick(opp_seat, "Knight")
+        if err:
+            return
+        await _broadcast_events(room, events)
+        await _broadcast_state(room)
+        await _arm_turn_timer(room)
+
+    room.opp_prompt_task = asyncio.create_task(_fire())
+
+
 async def _arm_turn_timer(room: Room) -> None:
     """Cancel any existing per-turn timer; if a turn is active, arm a new one
     that auto-ends the turn after TURN_BUDGET_MS. Safety net against
@@ -178,8 +218,13 @@ async def _arm_turn_timer(room: Room) -> None:
     room.turn_timer_task = None
     if room.phase != Phase.PLAYING:
         return
+    # If we're currently paused waiting on an opp prompt, don't arm a turn
+    # timer yet — it'll be re-armed when the opp resolves.
+    if room.pause_start_ms is not None:
+        return
     seat_at_arm = room.active_seat
     turn_at_arm = room.turn_number
+    started_at_arm = room.turn_started_ms
 
     async def _fire() -> None:
         from src.chess.rooms import TURN_BUDGET_MS
@@ -188,10 +233,15 @@ async def _arm_turn_timer(room: Room) -> None:
         except asyncio.CancelledError:
             return
         async with room.lock:
-            # Stale-timer guard: turn may have already advanced naturally.
+            # Stale-timer guard: turn may have already advanced naturally, or
+            # turn_started_ms may have been extended by an opp-prompt pause.
             if room.phase != Phase.PLAYING:
                 return
             if room.active_seat != seat_at_arm or room.turn_number != turn_at_arm:
+                return
+            if room.turn_started_ms != started_at_arm:
+                # Deadline shifted (paused during this turn) — bail; the
+                # resume path will arm a fresh timer.
                 return
             # Force the turn to end. Bypass the "must move" and in-check rules
             # so a stuck player never deadlocks the game; if they're in check
@@ -244,6 +294,11 @@ async def chess_socket(ws: WebSocket) -> None:
         player = room.add_player(name=name, ws=ws)
     await _send(player, {"type": "welcome", "your_seat": player.seat, "player_id": player.pid})
     await _broadcast_state(room)
+    # Re-deliver any pending prompt addressed to the rejoining player so
+    # their right-rail UI rehydrates correctly after refresh.
+    for pr in list(room.pending_prompts.values()):
+        if pr.seat == player.seat:
+            await _send(player, pr.to_json())
     await _arm_turn_timer(room)
 
     try:
@@ -324,6 +379,11 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
             return
         await _broadcast_events(room, events)
         await _broadcast_pending_prompts(room)
+        # If Forced Promotion paused the turn, cancel turn timer + arm opp's.
+        if room.pause_start_ms is not None:
+            if room.turn_timer_task is not None and not room.turn_timer_task.done():
+                room.turn_timer_task.cancel()
+            await _arm_opp_prompt_timer(room)
         await _broadcast_state(room)
         return
 
@@ -363,6 +423,12 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
         if err:
             await _send(player, {"type": "error", "text": err})
             return
+        await _broadcast_state(room)
+        return
+
+    if action == "decline_echo":
+        async with room.lock:
+            room.decline_echo(player.seat)
         await _broadcast_state(room)
         return
 
@@ -418,6 +484,13 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
             return
         await _broadcast_events(room, events)
         await _broadcast_pending_prompts(room)
+        # If this prompt_response resolved a Forced Promotion, re-arm the
+        # caster's turn timer (which was paused while the opp decided).
+        if room.pause_start_ms is None and room.opp_prompt_task is not None:
+            if not room.opp_prompt_task.done():
+                room.opp_prompt_task.cancel()
+            room.opp_prompt_task = None
+            await _arm_turn_timer(room)
         await _broadcast_state(room)
         return
 

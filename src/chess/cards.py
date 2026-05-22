@@ -85,7 +85,7 @@ CARD_DEFS: list[CardDef] = [
             ("friendly_piece", "any_empty_square"), tags=("counts_as_move",)),
     CardDef("spell_king_to_center", "King to Center (Draw 1)", 5, "spell", 2, "spell_king_to_center",
             ("any_piece_kind", "empty_square_central4"),
-            tags=("counts_as_move", "no_king_capture")),
+            tags=("no_king_capture",)),
 
     # ---- 6-gold (4) ----
     CardDef("spell_draw_double", "Draw Hand Doubled", 6, "spell", 2, "spell_draw_double"),

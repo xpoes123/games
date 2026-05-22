@@ -27,7 +27,7 @@ const CARD_EFFECTS = {
   piece_queen: "Place a queen in your back two ranks.",
   piece_any: "Pick a piece kind, pay its cost, place in your back two ranks.",
   spell_extra_pawn_move: "Target pawn gets one extra forward step this turn.",
-  spell_gain_2_gold: "Free. Gain 1 gold this turn (does not exceed your gold cap).",
+  spell_gain_2_gold: "Free. Gain 1 gold this turn — can push you above your gold cap.",
   spell_draw_2: "Draw 2 cards.",
   spell_pawn_back_or_two_moves: "Choose: pawn moves backward OR two pawn moves this turn.",
   spell_play_2_pawns: "Place 2 pawns in your back two ranks.",
@@ -41,7 +41,7 @@ const CARD_EFFECTS = {
   spell_forced_promotion: "Pick one of your pawns. Your OPPONENT picks Knight or Bishop; the pawn becomes that piece in place.",
   spell_discard_draw: "Discard any subset of your hand, draw one per discard.",
   spell_teleport: "Move one of your pieces to any empty square. Counts as your move.",
-  spell_king_to_center: "Move a king to d4/d5/e4/e5; draw a card. Counts as move. No king capture.",
+  spell_king_to_center: "Move a king to d4/d5/e4/e5; draw a card. No king capture this turn.",
   spell_draw_double: "Draw cards equal to your current hand size.",
   spell_pawns_to_queen: "Need 5+ pawns. Remove all your pawns; place a queen in back two.",
   spell_material_to_queen: "Sacrifice friendly pieces totaling exactly 7; place a queen.",
@@ -419,7 +419,28 @@ function handleMessage(msg) {
     render();
     maybeAutoEchoCast();
     maybePlayCheckSound();
+    hydrateServerPromptFromState();
     if (deckOpen) renderDeckPanel();
+  }
+}
+
+function hydrateServerPromptFromState() {
+  // After a reconnect / refresh, the dedicated `prompt` message may have
+  // already been sent during a previous session. Use state.pending_prompt
+  // as the source of truth if our local serverPrompt is empty or stale.
+  if (!lastState) return;
+  const sp = lastState.pending_prompt;
+  if (!sp) {
+    // No pending prompt — drop any stale local one.
+    if (serverPrompt && lastState.phase === "PLAYING") {
+      serverPrompt = null;
+      renderPromptArea();
+    }
+    return;
+  }
+  if (!serverPrompt || serverPrompt.prompt_id !== sp.prompt_id) {
+    serverPrompt = sp;
+    renderPromptArea();
   }
 }
 
@@ -1449,6 +1470,12 @@ function beginCasting(card) {
 }
 
 function cancelCasting() {
+  // If we were casting an Echo-stolen card, tell the server to drop the
+  // free-cast flag so it doesn't auto-pop again every state arrival.
+  const echoId = lastState && lastState.you && lastState.you.echo_free_instance_id;
+  if (casting && echoId && casting.card.instance_id === echoId) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "decline_echo" }));
+  }
   casting = null;
   render();
 }
@@ -2201,6 +2228,27 @@ function modalOptionsForCard(card_id) {
 
 function updateTimer(deadlineMs) {
   if (timerHandle) { clearInterval(timerHandle); timerHandle = null; }
+  // Pause overrides: if the caster's turn is paused waiting on an opp
+  // decision, show the opp's prompt deadline instead and label it.
+  const paused = lastState && lastState.turn_paused;
+  const oppDeadline = lastState && lastState.opp_prompt_deadline_ms;
+  if (paused && oppDeadline) {
+    function tickOpp() {
+      const left = Math.max(0, Math.ceil((oppDeadline - Date.now()) / 1000));
+      timerNum.textContent = "opp: " + left + "s";
+      const filled = Math.min(5, Math.ceil(left / 6));
+      timerDots.innerHTML = "";
+      for (let i = 0; i < 5; i++) {
+        const d = document.createElement("span");
+        d.className = "timer-dot" + (i < filled ? "" : " empty");
+        if (i === 0 && left <= 6 && filled === 1) d.classList.add("low");
+        timerDots.appendChild(d);
+      }
+    }
+    tickOpp();
+    timerHandle = setInterval(tickOpp, 500);
+    return;
+  }
   if (!deadlineMs) {
     timerDots.innerHTML = "";
     timerNum.textContent = "—";
@@ -2209,7 +2257,6 @@ function updateTimer(deadlineMs) {
   function tick() {
     const left = Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000));
     timerNum.textContent = left + "s";
-    // 5 dots, each 18s. Drain from right.
     const filled = Math.min(5, Math.ceil(left / 18));
     const low = left <= 18;
     timerDots.innerHTML = "";

@@ -56,7 +56,8 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
         room.draw_cards(player, 2)
         return [{"kind": "card_drawn", "by": player.seat, "count": 2}]
     if key == "spell_gain_2_gold":
-        player.gold = min(player.gold + 1, player.gold_cap)
+        # Free; +1 gold with no cap so you can stockpile beyond gold_cap.
+        player.gold += 1
         return []
     if key == "spell_extra_pawn_move":
         sq = pending.targets_collected[0]["square"]

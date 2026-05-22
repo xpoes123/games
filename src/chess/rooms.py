@@ -47,6 +47,7 @@ log = logging.getLogger("chess")
 HAND_CAP = 10
 GOLD_CAP_MAX = 10
 TURN_BUDGET_MS = 90_000
+OPP_DECISION_BUDGET_MS = 30_000
 MAX_LOG = 30
 MAX_MOVES_PER_TURN = 4
 
@@ -154,6 +155,12 @@ class Room:
         # card play.
         self.undo_snapshot: dict | None = None
         self.turn_timer_task: asyncio.Task | None = None
+        # Opponent-decision pause: when a card stages a prompt for the
+        # opponent (e.g. Forced Promotion), we pause the caster's turn
+        # timer until the opponent answers.
+        self.pause_start_ms: int | None = None
+        self.opp_prompt_deadline_ms: int | None = None
+        self.opp_prompt_task: asyncio.Task | None = None
         self.lock = asyncio.Lock()
 
     # ---- helpers ----
@@ -175,9 +182,9 @@ class Room:
     # ---- player join/leave ----
 
     def add_player(self, name: str, ws=None) -> Player:
-        # Reconnect path: a disconnected player with the same name reclaims
-        # their seat. Without this, refreshing a tab lands you as spectator
-        # because the old pid still holds the seat (disconnect only nulls ws).
+        # Reconnect path: a player with the same name reclaims their seat,
+        # even if the old ws hasn't been torn down yet (browser-refresh race
+        # where the new ws connects before the old close is processed).
         for seat_key in ("white", "black"):
             pid = self.seats.get(seat_key)
             if pid is None:
@@ -185,8 +192,16 @@ class Room:
             held = self.players.get(pid)
             if held is None:
                 continue
-            if held.ws is None and held.name == name:
+            if held.name == name:
+                old_ws = held.ws
                 held.ws = ws
+                if old_ws is not None and old_ws is not ws:
+                    try:
+                        # Close the dangling old socket. asyncio.create_task
+                        # detaches so we don't block the join path.
+                        asyncio.create_task(old_ws.close(code=4001))
+                    except Exception:
+                        pass
                 return held
         # Otherwise: claim the first free seat, else spectate.
         pid = secrets.token_hex(8)
@@ -523,6 +538,9 @@ class Room:
             prompt = build_modal_prompt(opp.seat, ["Knight", "Bishop"])
             prompt.label = "Forced Promotion — pick Knight or Bishop"
             self.pending_prompts[prompt.prompt_id] = prompt
+            # Pause caster's turn timer; arm opp decision deadline.
+            self.pause_start_ms = self.now_ms()
+            self.opp_prompt_deadline_ms = self.now_ms() + OPP_DECISION_BUDGET_MS
             self._log(f"{seat} plays Forced Promotion — awaiting opponent")
             return [{"kind": "card_played", "by": seat, "card_id": card.defn.id}], None
 
@@ -578,6 +596,11 @@ class Room:
         # only choose_opp_move shows the victim's legal moves), undo is no
         # longer safe — would be a free peek.
         if any(pr.kind == "choose_opp_move" for pr in self.pending_prompts.values()):
+            self.undo_snapshot = None
+        # Drawing cards also reveals private info — peeking and undoing
+        # would be a free look at the top of your deck.
+        if any(e.get("kind") == "card_drawn" and (e.get("count") or 0) > 0
+               for e in events):
             self.undo_snapshot = None
 
         # Apply card tag side-effects after resolution.
@@ -969,6 +992,15 @@ class Room:
         self._log(f"{seat} undoes last action")
         return None
 
+    def decline_echo(self, seat: str) -> None:
+        """Caster cancels the auto-cast of an Echo-stolen card. The card
+        stays in their hand at normal cost; the free-cast bonus is forfeit.
+        Stops the FE auto-cast loop from re-popping every state arrival."""
+        p = self.player_by_seat(seat)
+        if p is None:
+            return
+        p.echo_free_instance_id = None
+
     def toggle_annotation(self, seat: str, sq: str) -> None:
         if seat not in ("white", "black"):
             return
@@ -1163,8 +1195,18 @@ class Room:
         # Clear the modal prompt for the opponent.
         self.pending_prompts = {k: v for k, v in self.pending_prompts.items() if v.kind != "select_modal"}
         self.pending_card_play = None
+        self._resume_after_opp_prompt()
         self._log(f"{opp_seat} picks {kind.title()} — pawn at {pawn_sq} becomes {kind}")
         return events, None
+
+    def _resume_after_opp_prompt(self) -> None:
+        """Add any opp-decision pause duration to turn_started_ms so the
+        caster's deadline shifts forward by the time spent waiting."""
+        if self.pause_start_ms is not None:
+            elapsed = self.now_ms() - self.pause_start_ms
+            self.turn_started_ms += elapsed
+            self.pause_start_ms = None
+        self.opp_prompt_deadline_ms = None
 
     def apply_opp_chosen_move(self, caster_seat: str, src: str, dst: str,
                               promote: str | None) -> tuple[list[dict], str | None]:
@@ -1429,6 +1471,8 @@ class Room:
             "turn_deadline_ms": (
                 self.turn_started_ms + TURN_BUDGET_MS if self.phase == Phase.PLAYING else None
             ),
+            "opp_prompt_deadline_ms": self.opp_prompt_deadline_ms,
+            "turn_paused": self.pause_start_ms is not None,
             "white": self.player_state(white) if white else None,
             "black": self.player_state(black) if black else None,
             "white_setup_confirmed": bool(white and white.setup_confirmed),
