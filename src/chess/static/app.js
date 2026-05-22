@@ -168,6 +168,11 @@ function join() {
   joinBtn.disabled = true;
   lastRoom = room;
   lastName = name;
+  // Initialize/resume audio in the same click that joins — browsers gate
+  // AudioContext until a real user gesture. Without this the first sound
+  // event from the server gets silently dropped on Chrome.
+  const ctx = ensureAudio();
+  if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
   connect(room, name);
 }
 
@@ -219,6 +224,20 @@ function connect(room, name) {
 }
 
 // ---- top buttons ----
+
+const soundBtn = $("sound-btn");
+function refreshSoundBtn() {
+  if (soundBtn) soundBtn.textContent = "sound: " + (soundOn ? "on" : "off");
+}
+refreshSoundBtn();
+if (soundBtn) {
+  soundBtn.addEventListener("click", () => {
+    soundOn = !soundOn;
+    localStorage.setItem(SOUND_KEY, soundOn ? "on" : "off");
+    refreshSoundBtn();
+    if (soundOn) sfx.move();  // confirmation click
+  });
+}
 
 copyBtn.addEventListener("click", () => {
   const url = new URL(location.href);
@@ -335,6 +354,7 @@ function handleMessage(msg) {
     window.lastPhase = lastState.phase;
     render();
     maybeAutoEchoCast();
+    maybePlayCheckSound();
   }
 }
 
@@ -349,25 +369,127 @@ function maybeAutoEchoCast() {
   beginCasting(card);
 }
 
+// ---- sound (synthesized via WebAudio, no asset files) ----
+
+const SOUND_KEY = "chess_sound_on";
+let audioCtx = null;
+let soundOn = localStorage.getItem(SOUND_KEY) !== "off";
+
+function ensureAudio() {
+  if (audioCtx) return audioCtx;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    audioCtx = new Ctx();
+  } catch (_) { return null; }
+  return audioCtx;
+}
+
+// Short percussive "click" — noise burst shaped by an envelope.
+function playClick({ freq = 220, dur = 0.07, gain = 0.25, kind = "thunk" } = {}) {
+  if (!soundOn) return;
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  // Mix a short noise burst with a low body tone — feels woody.
+  const bufLen = Math.floor(ctx.sampleRate * dur);
+  const noiseBuf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+  const data = noiseBuf.getChannelData(0);
+  for (let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1);
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuf;
+  const noiseFilt = ctx.createBiquadFilter();
+  noiseFilt.type = "bandpass";
+  noiseFilt.frequency.value = kind === "tap" ? 1800 : 600;
+  noiseFilt.Q.value = 1.2;
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(gain * 0.6, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  noise.connect(noiseFilt).connect(noiseGain).connect(ctx.destination);
+  noise.start(now);
+
+  const osc = ctx.createOscillator();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(freq, now);
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.55, now + dur);
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(gain, now);
+  oscGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  osc.connect(oscGain).connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + dur + 0.02);
+}
+
+function playTone({ freq = 440, dur = 0.2, gain = 0.18, type = "sine", glide = null } = {}) {
+  if (!soundOn) return;
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, now);
+  if (glide !== null) osc.frequency.exponentialRampToValueAtTime(glide, now + dur);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(gain, now + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + dur + 0.02);
+}
+
+const sfx = {
+  move:    () => playClick({ freq: 220, dur: 0.07, gain: 0.22, kind: "thunk" }),
+  capture: () => { playClick({ freq: 140, dur: 0.11, gain: 0.30, kind: "thunk" });
+                   setTimeout(() => playClick({ freq: 90, dur: 0.10, gain: 0.20 }), 30); },
+  place:   () => playClick({ freq: 480, dur: 0.06, gain: 0.18, kind: "tap" }),
+  card:    () => playClick({ freq: 700, dur: 0.05, gain: 0.12, kind: "tap" }),
+  check:   () => { playTone({ freq: 880, dur: 0.18, gain: 0.18, type: "triangle" });
+                   setTimeout(() => playTone({ freq: 740, dur: 0.20, gain: 0.16, type: "triangle" }), 140); },
+  kingCap: () => { playTone({ freq: 520, dur: 0.35, gain: 0.22, type: "sawtooth", glide: 140 });
+                   setTimeout(() => playTone({ freq: 220, dur: 0.45, gain: 0.20, type: "sine", glide: 90 }), 260); },
+  turn:    () => playTone({ freq: 660, dur: 0.10, gain: 0.10, type: "sine" }),
+};
+
 // ---- animations / events ----
 
 function handleEvent(msg) {
   const k = msg.kind;
   if (k === "piece_moved") {
     animateMove(msg.from, msg.to);
+    // capture-vs-quiet-move sound is emitted on piece_captured below; here
+    // we play the move sound only if no capture event will land for this
+    // move. Server emits piece_captured separately when applicable.
+    if (msg.captured) {
+      // skip — capture event will play its own sound
+    } else {
+      sfx.move();
+    }
   } else if (k === "piece_captured") {
     fadeSquare(msg.sq, "fade-out");
+    sfx.capture();
   } else if (k === "piece_placed") {
-    // delayed fade-in handled in render when piece appears
     setTimeout(() => fadeSquare(msg.sq, "fade-in"), 0);
+    sfx.place();
   } else if (k === "card_played") {
-    // spell-zone overlay — pieced together from card info if we know it
     flashSpellOverlay(msg);
+    sfx.card();
   } else if (k === "king_captured") {
     kingFlash();
+    sfx.kingCap();
   } else if (k === "turn_end") {
     showTurnBanner(msg.next === mySeat ? "Your Turn" : "Opponent's Turn");
+    if (msg.next === mySeat) sfx.turn();
   }
+}
+
+// Play a check chime when a state arrives that puts US into check.
+let _prevInCheck = false;
+function maybePlayCheckSound() {
+  if (!lastState || !mySeat) return;
+  const cur = mySeat === "white" ? !!lastState.white_in_check : !!lastState.black_in_check;
+  if (cur && !_prevInCheck) sfx.check();
+  _prevInCheck = cur;
 }
 
 function squareCenter(sq) {
