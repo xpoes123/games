@@ -82,11 +82,14 @@ instance, then `app.mount("/<name>", that_app)` in `src/main.py`.
 - pytest for tests; run `pytest tests/` before committing
 - No hardcoded secrets — all config via env / `.env`
 
-## Status (2026-05-18)
+## Status (2026-05-22)
 
 Bridge is **playable end-to-end** per David's variant spec. **Hearthstone
-Chess** (the second game) was built overnight 2026-05-18: backend,
-frontend, all 30 card effects, and a king-capture WS integration test.
+Chess** (the second game) has gone through extensive iteration since the
+overnight build on 2026-05-18 — a new pre-game material-placement phase,
+a deck tracker, synthesized piece sounds, undo, opponent-decision timer,
+in-check enforcement, refresh-survives, last-move highlight, and a
+game-over recap have all been added on top of the original 30-card engine.
 
 Deploys are manual (Sentinel is offline):
   `cd /opt/games && git pull && systemctl restart games`
@@ -99,26 +102,52 @@ capture wins. See `src/chess/docs/` for full SPEC, CARDS, PROTOCOL,
 STATE, UI, and PLAN documents.
 
 Done:
-- [x] Backend: chess engine (custom move generator, no-check rules,
-      modular-board wrap), deck/hand, room state machine, full WS routing
-- [x] All 60 spell effects + piece placement implemented end-to-end
+- [x] Backend: chess engine (custom move generator, no-check enforcement
+      for movement but in-check detection for end-turn block, modular-
+      board wrap), deck/hand, room state machine, full WS routing
+- [x] All 30 spell effects + piece placement implemented end-to-end
 - [x] Frontend: lobby, mulligan UI, board (Tokyo Night palette, filled
-      Unicode glyphs), hand fan, opponent panel, log, gold/timer dots,
-      targeting flow for every prompt kind from PROTOCOL.md
+      Unicode glyphs), hand fan with hover-zoom, opponent panel, log,
+      gold/timer dots, targeting flow for every prompt kind in PROTOCOL.md
+- [x] **Pre-game SETUP phase**: each side picks exactly 8 points of
+      starting material (pawn=1, knight=2, bishop=3, rook=5, queen=8);
+      hidden from opponent until both confirm; auto-fill on timeout
+- [x] **Deck tracker dropdown** — click `deck N` to see remaining cards
+      grouped by name + cost
+- [x] **Sounds** — synthesized via WebAudio (move/capture/place/card/
+      check/king/turn); mute toggle in topbar
+- [x] **Undo last action** (move OR card) — server snapshots before each
+      action; cross-player prompts + draws invalidate the snapshot
+- [x] **Last-move highlight** + **in-check king highlight** + **inline
+      "moving into check" two-click confirm** (no native dialogs)
+- [x] **Opponent-decision timer**: Forced Promotion pauses caster's
+      turn clock; opp has 30s to choose (Knight default on timeout)
+- [x] **Refresh-survives**: name-based seat reclaim handles ws races,
+      pending prompts re-delivered on reconnect, FE hydrates from state
+- [x] **Right-click square annotations** — drop a marker for your
+      opponent; auto-clears on end-of-turn
+- [x] **Auto-end turn timer** (90s) + setup timer (180s) — never stalls
+- [x] **Game-over recap** — moves, cards played, captures, lost, gold
+      peak per side
 - [x] Animations: piece move tween, capture fade, placement fade-in,
       king-capture flash, turn-change banner
 - [x] `scripts/integration_full_chess.py` — drives 2 WS clients through
       a full king-capture game in ~5s, asserts win_reason
 - [x] `scripts/preview_chess.py` — Playwright screenshots of lobby,
       mulligan, midgame, targeting, GAME OVER
-- [x] 112 tests pass (`./venv/bin/pytest tests/`)
+- [x] 119 tests pass (`./venv/bin/pytest tests/`)
 
 Open (deferred):
-- [ ] Reconnect-safe gameplay (refresh loses seat)
+- [ ] Mid-cast refresh persistence — refresh while choosing card targets
+      resets the local casting state (gold is not yet charged so no
+      permanent damage, just re-pick)
 - [ ] Card-draw slide-in animation (CSS keyframe exists, not wired)
 - [ ] Multi-table support per room code (currently 1 game per code)
 - [ ] AI opponent / single-player mode
 - [ ] Spectator UI (slot exists in code, no first-class UX)
+- [ ] Live-deploy continuity — persist room state across `systemctl
+      restart games` so live games survive a redeploy (see
+      `~/.claude/.../project_deferred_features.md`)
 
 Notes:
 - No castling; no check enforcement. King capture is just a normal move

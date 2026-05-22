@@ -294,6 +294,12 @@ button.warn { border-color: var(--warn); color: var(--warn); }
   background: rgba(247, 118, 142, 0.45) !important;
   box-shadow: inset 0 0 0 2px var(--bad);
 }
+.sq.last-move {
+  background: rgba(224, 175, 104, 0.20) !important;
+}
+.sq.last-move.dark {
+  background: rgba(224, 175, 104, 0.32) !important;
+}
 .piece.sick {
   opacity: 0.55;
   filter: grayscale(0.4);
@@ -442,7 +448,17 @@ button.warn { border-color: var(--warn); color: var(--warn); }
   user-select: none;
   transition: transform 120ms ease-out, border-color 120ms ease-out;
 }
-.card:hover.playable { transform: translateY(-4px); border-color: var(--accent); }
+/* Hover-zoom: lift, enlarge, and z-index above neighbors so packed text is
+   actually readable without leaning into the screen. Applies to ALL hand
+   cards (playable or not) so you can read effects even when you can't pay. */
+.card:hover {
+  transform: translateY(-12px) scale(1.35);
+  z-index: 50;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--bg);
+}
+.card:hover .effect-text { font-size: 0.62rem; }
+.card.unaffordable:hover { opacity: 0.85; }
 .card .cost {
   position: absolute; top: 3px; left: 3px;
   width: 18px; height: 18px;
@@ -554,6 +570,27 @@ button.warn { border-color: var(--warn); color: var(--warn); }
 }
 #banner .sub { font-size: 0.85rem; color: var(--muted); font-weight: normal; letter-spacing: normal; }
 #banner button { margin-top: 0.5rem; }
+#banner .recap {
+  font-size: 0.78rem;
+  font-weight: normal;
+  letter-spacing: normal;
+  color: var(--fg);
+  border-collapse: collapse;
+  margin: 0.4rem 0;
+}
+#banner .recap th, #banner .recap td {
+  padding: 2px 16px;
+  text-align: center;
+}
+#banner .recap th {
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+#banner .recap td:first-child {
+  color: var(--muted);
+  text-align: right;
+}
 
 #turn-banner {
   position: fixed;

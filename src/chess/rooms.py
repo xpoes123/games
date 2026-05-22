@@ -48,6 +48,7 @@ HAND_CAP = 10
 GOLD_CAP_MAX = 10
 TURN_BUDGET_MS = 90_000
 OPP_DECISION_BUDGET_MS = 30_000
+SETUP_BUDGET_MS = 180_000  # 3 minutes to place 8 points of material
 MAX_LOG = 30
 MAX_MOVES_PER_TURN = 4
 
@@ -95,6 +96,12 @@ class Player:
     has_acted_this_turn: bool = False  # made a chess move OR a counts-as-move card
     triple_move_active: bool = False
     triple_move_used: set = field(default_factory=set)
+    # End-of-game recap stats.
+    moves_made: int = 0
+    cards_played: int = 0
+    pieces_captured: int = 0
+    pieces_lost: int = 0
+    gold_peak: int = 0
     # Echo grants a free immediate cast of the stolen card, identified by
     # instance_id (slot indices shift as cards are played). Consumed on the
     # matching play_card, cleared at end-of-turn.
@@ -149,6 +156,12 @@ class Room:
         self.winner: str | None = None
         self.win_reason: str | None = None  # "king_capture" | "concede"
         self.extra_turn_pending: bool = False
+        # Last chess move (from, to, by) for board highlight. Cleared on
+        # turn change so each side sees only the move that landed them in
+        # control. None during MULLIGAN/SETUP.
+        self.last_move: dict | None = None
+        self.setup_started_ms: int = 0
+        self.setup_timer_task: asyncio.Task | None = None
         self.annotations: dict[str, set[str]] = {"white": set(), "black": set()}
         # Snapshot of state right before the most recent chess move on the
         # current turn, used by undo_move. Cleared on turn change or any
@@ -269,7 +282,31 @@ class Room:
 
     def _begin_setup(self) -> None:
         self.phase = Phase.SETUP
+        self.setup_started_ms = self.now_ms()
         self._log("setup — place 8 points of material (hidden until both confirm)")
+
+    def setup_auto_fill_and_confirm(self, seat: str) -> str | None:
+        """Timeout path: fill out the player's remaining points with pawns
+        (placed on the first empty pawn-zone squares) and force-confirm."""
+        if self.phase != Phase.SETUP:
+            return "not in setup"
+        p = self.player_by_seat(seat)
+        if p is None or p.setup_confirmed:
+            return None
+        # Fill with pawns on the pawn placement zone.
+        remaining = SETUP_POINTS - self._setup_points_total(p.setup_picks)
+        used = {pk["square"] for pk in p.setup_picks}
+        for sq in pawn_placement_ranks(seat):  # type: ignore[arg-type]
+            if remaining <= 0:
+                break
+            if sq in used:
+                continue
+            if self.board.at(sq) is not None:
+                continue
+            p.setup_picks.append({"kind": "pawn", "square": sq})
+            used.add(sq)
+            remaining -= 1
+        return self.setup_confirm(seat)
 
     def _setup_zone(self, seat: str, kind: str) -> list[str]:
         if kind == "pawn":
@@ -608,6 +645,7 @@ class Room:
             p.moves_remaining -= 1
             p.has_acted_this_turn = True
 
+        p.cards_played += 1
         prefix_events = [{"kind": "card_played", "by": seat, "card_id": card.id}]
         self._log(f"{seat} plays {card.name}")
         return prefix_events + events, None
@@ -989,6 +1027,7 @@ class Room:
         self.pending_prompts.clear()
         self.pending_card_play = None
         self.undo_snapshot = None
+        self.last_move = None
         self._log(f"{seat} undoes last action")
         return None
 
@@ -1000,6 +1039,33 @@ class Room:
         if p is None:
             return
         p.echo_free_instance_id = None
+
+    def cancel_echo_pick(self, seat: str) -> str | None:
+        """Caster aborts the pick_opp_hand prompt for Echo. Refund the cast
+        (gold + card back to caster's hand) and drop the prompt. This is
+        the 'I changed my mind before peeking-or-stealing' path. The opp's
+        hand was hidden from the network — no info leak."""
+        if self.pending_card_play is None:
+            return "nothing pending"
+        if self.pending_card_play.card.defn.id != "spell_echo":
+            return "not an echo pending"
+        if self.pending_card_play.seat != seat:
+            return "not your echo"
+        p = self.player_by_seat(seat)
+        if p is None:
+            return "no such seat"
+        pending = self.pending_card_play
+        # Refund gold and return the card to hand.
+        p.gold += pending.paid_gold
+        p.hand.insert(pending.slot, pending.card)
+        # Drop the prompt + pending state.
+        self.pending_prompts = {
+            k: v for k, v in self.pending_prompts.items()
+            if not (v.seat == seat and v.kind == "pick_opp_hand")
+        }
+        self.pending_card_play = None
+        self._log(f"{seat} cancels Echo — refunded")
+        return None
 
     def toggle_annotation(self, seat: str, sq: str) -> None:
         if seat not in ("white", "black"):
@@ -1080,8 +1146,16 @@ class Room:
         # Snapshot for undo BEFORE mutating board / counters.
         self.undo_snapshot = self._snapshot_for_undo(seat)
         result = self.board.apply_move(move, modular=modular)
+        self.last_move = {"from": src, "to": dst, "by": seat,
+                          "captured": result["captured_kind"]}
         p.moves_remaining -= 1
         p.has_acted_this_turn = True
+        p.moves_made += 1
+        if result["captured_kind"] is not None and result["captured_color"] != seat:
+            p.pieces_captured += 1
+            opp_p = self.opponent_of(seat)
+            if opp_p is not None:
+                opp_p.pieces_lost += 1
         if p.triple_move_active:
             p.triple_move_used.add(dst)  # piece is now at dst; mark it used
         if used_back:
@@ -1254,6 +1328,8 @@ class Room:
             if dst[1] == last_rank and move.promote is None:
                 move.promote = "queen"  # type: ignore[assignment]
         result = self.board.apply_move(move, modular=modular)
+        self.last_move = {"from": src, "to": dst, "by": victim_seat,
+                          "captured": result["captured_kind"]}
         events: list[dict] = [{
             "kind": "piece_moved", "from": src, "to": dst,
             "captured": result["captured_kind"],
@@ -1356,6 +1432,8 @@ class Room:
     def concede(self, seat: str) -> None:
         if self.phase == Phase.DONE:
             return
+        if seat not in ("white", "black"):
+            return
         self.phase = Phase.DONE
         self.winner = "black" if seat == "white" else "white"
         self.win_reason = "concede"
@@ -1375,6 +1453,8 @@ class Room:
         self.winner = None
         self.win_reason = None
         self.extra_turn_pending = False
+        self.last_move = None
+        self.annotations = {"white": set(), "black": set()}
         for p in self.players.values():
             p.hand = []
             p.deck = []
@@ -1389,6 +1469,11 @@ class Room:
             p.opp_moves_chosen_by_me_next_turn = False
             p.setup_picks = []
             p.setup_confirmed = False
+            p.moves_made = 0
+            p.cards_played = 0
+            p.pieces_captured = 0
+            p.pieces_lost = 0
+            p.gold_peak = 0
         if "white" in self.seats and "black" in self.seats:
             self._begin_mulligan()
         else:
@@ -1397,7 +1482,27 @@ class Room:
 
     # ---- state snapshot ----
 
+    def _recap(self) -> dict:
+        def stats(p: Player | None) -> dict:
+            if p is None:
+                return {}
+            return {
+                "name": p.name,
+                "moves": p.moves_made,
+                "cards_played": p.cards_played,
+                "captured": p.pieces_captured,
+                "lost": p.pieces_lost,
+                "gold_peak": p.gold_peak,
+            }
+        return {
+            "turns": self.turn_number,
+            "white": stats(self.player_by_seat("white")),
+            "black": stats(self.player_by_seat("black")),
+        }
+
     def player_state(self, p: Player) -> dict:
+        if p.gold > p.gold_peak:
+            p.gold_peak = p.gold
         return {
             "gold": p.gold,
             "gold_cap": p.gold_cap,
@@ -1473,6 +1578,11 @@ class Room:
             ),
             "opp_prompt_deadline_ms": self.opp_prompt_deadline_ms,
             "turn_paused": self.pause_start_ms is not None,
+            "setup_deadline_ms": (
+                self.setup_started_ms + SETUP_BUDGET_MS
+                if self.phase == Phase.SETUP and self.setup_started_ms
+                else None
+            ),
             "white": self.player_state(white) if white else None,
             "black": self.player_state(black) if black else None,
             "white_setup_confirmed": bool(white and white.setup_confirmed),
@@ -1496,6 +1606,8 @@ class Room:
                 "white": sorted(self.annotations["white"]),
                 "black": sorted(self.annotations["black"]),
             },
+            "last_move": self.last_move,
+            "recap": (self._recap() if self.phase == Phase.DONE else None),
         }
         # Surface any pending prompt for this viewer (Echo's pick_opp_hand,
         # choose_opp_move, etc.).

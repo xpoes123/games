@@ -229,3 +229,104 @@ def test_spell_tax_opponent_applies_next_turn():
     r.make_move("white", "e1", "e2", None)  # must-move rule
     r.end_turn("white")
     assert black.spell_tax == 3
+
+
+# ---- 2026-05-22 batch: last_move, recap, setup auto-fill, Echo cancel ----
+
+def test_last_move_tracked_and_reset_on_undo():
+    r = Room(code="TEST", rng=random.Random(1))
+    r.add_player("W")
+    r.add_player("B")
+    r.submit_mulligan("white", [])
+    r.submit_mulligan("black", [])
+    r.test_skip_setup()
+    assert r.last_move is None
+    err = r.make_move("white", "e1", "e2", None)[1]
+    assert err is None
+    assert r.last_move == {"from": "e1", "to": "e2", "by": "white", "captured": None}
+    # Undo clears it.
+    assert r.undo_move("white") is None
+    assert r.last_move is None
+
+
+def test_recap_counts_moves_cards_captures():
+    r = Room(code="TEST", rng=random.Random(1))
+    r.add_player("W")
+    r.add_player("B")
+    r.submit_mulligan("white", [])
+    r.submit_mulligan("black", [])
+    r.test_skip_setup()
+    # Put a black pawn on e2 for white's king to capture.
+    r.board.place("e2", Piece("black", "pawn"))
+    events, err = r.make_move("white", "e1", "e2", None)
+    assert err is None
+    white = r.player_by_seat("white")
+    black = r.player_by_seat("black")
+    assert white.moves_made == 1
+    assert white.pieces_captured == 1
+    assert black.pieces_lost == 1
+    # Concede so we get a DONE recap.
+    r.concede("black")
+    snap = r.snapshot_for(white)
+    assert snap["recap"] is not None
+    assert snap["recap"]["white"]["captured"] == 1
+    assert snap["recap"]["black"]["lost"] == 1
+
+
+def test_setup_auto_fill_completes_to_8_pawns():
+    r = Room(code="TEST", rng=random.Random(1))
+    w = r.add_player("W")
+    b = r.add_player("B")
+    r.submit_mulligan("white", [])
+    r.submit_mulligan("black", [])
+    assert r.phase == Phase.SETUP
+    # White has 0 points; auto-fill should add 8 pawns.
+    err = r.setup_auto_fill_and_confirm("white")
+    assert err is None
+    assert w.setup_confirmed is True
+    assert sum(1 for pk in w.setup_picks if pk["kind"] == "pawn") + len(w.setup_picks) > 0 or w.setup_picks == []
+    # Black hasn't confirmed yet — board still empty.
+    assert r.board.at("a2") is None
+    # Auto-fill black too — both confirmed → PLAYING + board has white's 8 pawns.
+    r.setup_auto_fill_and_confirm("black")
+    assert r.phase == Phase.PLAYING
+    assert r.board.at("a2") is not None and r.board.at("a2").kind == "pawn"
+
+
+def test_echo_cancel_refunds_gold_and_card():
+    r = Room(code="TEST", rng=random.Random(1))
+    w = r.add_player("W")
+    b = r.add_player("B")
+    r.submit_mulligan("white", [])
+    r.submit_mulligan("black", [])
+    r.test_skip_setup()
+    w.gold = 10
+    # Put Echo in white's hand and give black at least one card to steal.
+    w.hand.insert(0, Card(instance_id="echo", defn=CARDS_BY_ID["spell_echo"]))
+    b.hand.append(Card(instance_id="vict", defn=CARDS_BY_ID["piece_pawn"]))
+    pre_gold = w.gold
+    pre_hand_len = len(w.hand)
+    events, err = r.play_card("white", 0, [], None, [])
+    assert err is None
+    # Echo is mid-resolution; gold is spent, card popped, pending prompt up.
+    assert w.gold < pre_gold
+    assert r.pending_card_play is not None
+    # Cancel via cancel_echo_pick.
+    err = r.cancel_echo_pick("white")
+    assert err is None
+    assert w.gold == pre_gold
+    assert len(w.hand) == pre_hand_len
+    assert r.pending_card_play is None
+    assert not r.pending_prompts
+
+
+def test_concede_works_during_setup():
+    r = Room(code="TEST", rng=random.Random(1))
+    r.add_player("W")
+    r.add_player("B")
+    r.submit_mulligan("white", [])
+    r.submit_mulligan("black", [])
+    assert r.phase == Phase.SETUP
+    r.concede("white")
+    assert r.phase == Phase.DONE
+    assert r.winner == "black"

@@ -128,6 +128,7 @@ let lastName = null;
 
 // Active targeting "play" — full client-side walk.
 let casting = null;
+let pendingCheckMove = null;   // {from, to} — armed when a move would put you in check; commits on second click
 /* casting shape:
  {
    slot, card,
@@ -820,8 +821,19 @@ function render() {
       ? `${s.winner === "white" ? s.black_name || "black" : s.white_name || "white"} conceded`
       : `${s.winner} captured the king`;
     bannerEl.hidden = false;
+    const recap = s.recap || {};
+    const w = recap.white || {}, bl = recap.black || {};
     bannerEl.innerHTML = `<div>${won ? "YOU WIN" : "GAME OVER"}</div>
       <div class="sub">${reason}</div>
+      <table class="recap">
+        <tr><th></th><th>${escapeHtml(w.name || "white")}</th><th>${escapeHtml(bl.name || "black")}</th></tr>
+        <tr><td>moves</td><td>${w.moves || 0}</td><td>${bl.moves || 0}</td></tr>
+        <tr><td>cards played</td><td>${w.cards_played || 0}</td><td>${bl.cards_played || 0}</td></tr>
+        <tr><td>captures</td><td>${w.captured || 0}</td><td>${bl.captured || 0}</td></tr>
+        <tr><td>lost</td><td>${w.lost || 0}</td><td>${bl.lost || 0}</td></tr>
+        <tr><td>gold peak</td><td>${w.gold_peak || 0}</td><td>${bl.gold_peak || 0}</td></tr>
+        <tr><td>turns</td><td colspan="2">${recap.turns || 0}</td></tr>
+      </table>
       <button id="rematch-btn">rematch</button>`;
     const rematchBtn = document.getElementById("rematch-btn");
     if (rematchBtn) {
@@ -885,6 +897,9 @@ function renderBoard(pieces, youSeat) {
     }
   }
 
+  // Last-move highlight (from + to).
+  const lastMove = (lastState && lastState.last_move) || null;
+
   // Check highlight: which king square is under attack.
   const checkedSquares = new Set();
   if (lastState) {
@@ -945,6 +960,9 @@ function renderBoard(pieces, youSeat) {
 
       if (selectedSq === sq) cell.classList.add("selected");
       if (checkedSquares.has(sq)) cell.classList.add("in-check");
+      if (lastMove && (lastMove.from === sq || lastMove.to === sq)) {
+        cell.classList.add("last-move");
+      }
 
       if (validTargets && validTargets.has(sq)) {
         if (pc) cell.classList.add("target-piece");
@@ -1314,6 +1332,12 @@ function onSquareClick(sq, byKey) {
   if (!lastState) return;
   const s = lastState;
   const youSeat = mySeat;
+  // If a check-warning is armed, any click that ISN'T re-confirming the
+  // exact same move cancels the armed state.
+  if (pendingCheckMove
+      && !(selectedSq === pendingCheckMove.from && sq === pendingCheckMove.to)) {
+    pendingCheckMove = null;
+  }
   if (s.phase === "SETUP") {
     if (!s.you || s.you.setup_confirmed) return;
     // Clicking your own pick removes it; clicking an empty zone square places.
@@ -1358,11 +1382,26 @@ function onSquareClick(sq, byKey) {
       return;
     }
   }
-  // Warn if the move leaves your own king attacked.
+  // Warn if the move leaves your own king attacked. Two-click confirm via
+  // an inline banner — first attempt arms the warning, second click on the
+  // same destination commits. Selecting another piece cancels.
   if (movesIntoCheck(selectedSq, sq, byKey, youSeat)) {
-    const ok = confirm("This move leaves your king in check. Confirm move?");
-    if (!ok) { selectedSq = null; renderBoardOnly(); return; }
+    if (pendingCheckMove
+        && pendingCheckMove.from === selectedSq
+        && pendingCheckMove.to === sq) {
+      // Confirmed.
+      ws.send(JSON.stringify({ type: "move", from: selectedSq, to: sq }));
+      selectedSq = null;
+      pendingCheckMove = null;
+      flashStatusErr("");
+      statusLine.classList.remove("err");
+      return;
+    }
+    pendingCheckMove = { from: selectedSq, to: sq };
+    flashStatusErr("This leaves your king in check — click the destination again to confirm.");
+    return;
   }
+  pendingCheckMove = null;
   ws.send(JSON.stringify({ type: "move", from: selectedSq, to: sq }));
   selectedSq = null;
 }
@@ -2228,6 +2267,27 @@ function modalOptionsForCard(card_id) {
 
 function updateTimer(deadlineMs) {
   if (timerHandle) { clearInterval(timerHandle); timerHandle = null; }
+  // Setup-phase deadline takes precedence during SETUP.
+  if (lastState && lastState.phase === "SETUP" && lastState.setup_deadline_ms) {
+    const setupDeadline = lastState.setup_deadline_ms;
+    function tickSetup() {
+      const left = Math.max(0, Math.ceil((setupDeadline - Date.now()) / 1000));
+      const mm = Math.floor(left / 60), ss = left % 60;
+      timerNum.textContent = `setup ${mm}:${ss.toString().padStart(2, "0")}`;
+      // 5 dots, total budget ~180s → 36s per dot.
+      const filled = Math.min(5, Math.ceil(left / 36));
+      timerDots.innerHTML = "";
+      for (let i = 0; i < 5; i++) {
+        const d = document.createElement("span");
+        d.className = "timer-dot" + (i < filled ? "" : " empty");
+        if (i === 0 && left <= 36 && filled === 1) d.classList.add("low");
+        timerDots.appendChild(d);
+      }
+    }
+    tickSetup();
+    timerHandle = setInterval(tickSetup, 500);
+    return;
+  }
   // Pause overrides: if the caster's turn is paused waiting on an opp
   // decision, show the opp's prompt deadline instead and label it.
   const paused = lastState && lastState.turn_paused;

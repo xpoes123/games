@@ -167,6 +167,41 @@ async def _broadcast_pending_prompts(room: Room) -> None:
             target.ws = None
 
 
+async def _arm_setup_timer(room: Room) -> None:
+    """Auto-fill + force-confirm any seat that hasn't confirmed within
+    SETUP_BUDGET_MS. Prevents stalled games when one side walks away."""
+    import asyncio
+    from src.chess.rooms import Phase, SETUP_BUDGET_MS
+
+    if room.setup_timer_task is not None and not room.setup_timer_task.done():
+        room.setup_timer_task.cancel()
+    room.setup_timer_task = None
+    if room.phase != Phase.SETUP:
+        return
+    started = room.setup_started_ms
+
+    async def _fire() -> None:
+        delay = SETUP_BUDGET_MS / 1000
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        async with room.lock:
+            # Stale-timer guard.
+            if room.phase != Phase.SETUP or room.setup_started_ms != started:
+                return
+            for seat in ("white", "black"):
+                p = room.player_by_seat(seat)
+                if p is None or p.setup_confirmed:
+                    continue
+                room.setup_auto_fill_and_confirm(seat)
+                room._log(f"{seat} timed out — auto-confirmed setup")
+        await _broadcast_state(room)
+        await _arm_turn_timer(room)
+
+    room.setup_timer_task = asyncio.create_task(_fire())
+
+
 async def _arm_opp_prompt_timer(room: Room) -> None:
     """If a Forced Promotion prompt is pending for the opponent, schedule an
     auto-resolve with the default ('Knight') after OPP_DECISION_BUDGET_MS."""
@@ -327,6 +362,10 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
             await _send(player, {"type": "error", "text": err})
             return
         await _broadcast_state(room)
+        # If both mulligans landed → we just entered SETUP. Arm its timer.
+        from src.chess.rooms import Phase as _Phase
+        if room.phase == _Phase.SETUP:
+            await _arm_setup_timer(room)
         return
 
     if action == "setup_place":
@@ -361,6 +400,12 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
             await _send(player, {"type": "error", "text": err})
             return
         await _broadcast_state(room)
+        # Cancel setup timer if we're now in PLAYING.
+        from src.chess.rooms import Phase as _Phase
+        if room.phase == _Phase.PLAYING:
+            if room.setup_timer_task is not None and not room.setup_timer_task.done():
+                room.setup_timer_task.cancel()
+            room.setup_timer_task = None
         await _arm_turn_timer(room)
         return
 
@@ -429,6 +474,26 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
     if action == "decline_echo":
         async with room.lock:
             room.decline_echo(player.seat)
+        await _broadcast_state(room)
+        return
+
+    if action == "cancel_prompt":
+        prompt_id = msg.get("prompt_id")
+        async with room.lock:
+            prompt = room.pending_prompts.get(prompt_id) if prompt_id else None
+            if prompt is None:
+                return
+            if prompt.seat != player.seat:
+                return
+            err = None
+            if prompt.kind == "pick_opp_hand":
+                err = room.cancel_echo_pick(player.seat)
+            # Other prompt kinds (choose_opp_move, select_modal for opp's
+            # forced-promotion) don't support cancel — caster/opp must
+            # answer, and the server has its own auto-resolve timer.
+        if err:
+            await _send(player, {"type": "error", "text": err})
+            return
         await _broadcast_state(room)
         return
 
