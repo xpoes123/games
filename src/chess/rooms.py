@@ -74,6 +74,10 @@ class Player:
     name: str
     seat: Seat
     ws: Any = None
+    # Stable, browser-local identifier (localStorage UUID) so the persistence
+    # layer can group games by player across rooms. May be None for clients
+    # that don't send one (older builds, scripts).
+    client_id: str | None = None
     hand: list[Card] = field(default_factory=list)
     deck: list[Card] = field(default_factory=list)
     gold: int = 0
@@ -156,6 +160,14 @@ class Room:
         self.winner: str | None = None
         self.win_reason: str | None = None  # "king_capture" | "concede"
         self.extra_turn_pending: bool = False
+        # Persistence wiring — populated by app.py when a game becomes PLAYING.
+        # rooms.py never touches the DB directly; app.py owns the side effects.
+        self.persistence_slug: str | None = None
+        self.persistence_finalized: bool = False
+        # Snapshot of each side's 8-point setup, captured at setup_confirm
+        # (before _apply_setup_to_board clears player.setup_picks).
+        self.starting_setup_white: list[dict] = []
+        self.starting_setup_black: list[dict] = []
         # Last chess move (from, to, by) for board highlight. Cleared on
         # turn change so each side sees only the move that landed them in
         # control. None during MULLIGAN/SETUP.
@@ -194,7 +206,7 @@ class Room:
 
     # ---- player join/leave ----
 
-    def add_player(self, name: str, ws=None) -> Player:
+    def add_player(self, name: str, ws=None, client_id: str | None = None) -> Player:
         # Reconnect path: a player with the same name reclaims their seat,
         # even if the old ws hasn't been torn down yet (browser-refresh race
         # where the new ws connects before the old close is processed).
@@ -208,6 +220,11 @@ class Room:
             if held.name == name:
                 old_ws = held.ws
                 held.ws = ws
+                # Refresh the client_id on reconnect if the client supplied one
+                # (lets a player who cleared localStorage and rejoined update
+                # their identity), but never wipe a real id with None.
+                if client_id:
+                    held.client_id = client_id
                 if old_ws is not None and old_ws is not ws:
                     try:
                         # Close the dangling old socket. asyncio.create_task
@@ -226,7 +243,7 @@ class Room:
             self.seats["black"] = pid
         else:
             seat = "spectator"
-        player = Player(pid=pid, name=name, seat=seat, ws=ws)
+        player = Player(pid=pid, name=name, seat=seat, ws=ws, client_id=client_id)
         self.players[pid] = player
         # If both seats just filled, deal the starting hands and enter MULLIGAN.
         if self.phase == Phase.LOBBY and "white" in self.seats and "black" in self.seats:
@@ -370,6 +387,10 @@ class Room:
         white = self.player_by_seat("white")
         black = self.player_by_seat("black")
         if white and black and white.setup_confirmed and black.setup_confirmed:
+            # Snapshot setups for the persistence layer BEFORE _apply_setup_to_board
+            # clears each player's setup_picks.
+            self.starting_setup_white = list(white.setup_picks)
+            self.starting_setup_black = list(black.setup_picks)
             self._apply_setup_to_board()
             self._begin_playing()
         return None
@@ -1455,6 +1476,12 @@ class Room:
         self.extra_turn_pending = False
         self.last_move = None
         self.annotations = {"white": set(), "black": set()}
+        # Fresh game = fresh persistence row; the previous game (if any) stays
+        # in the DB under its own slug.
+        self.persistence_slug = None
+        self.persistence_finalized = False
+        self.starting_setup_white = []
+        self.starting_setup_black = []
         for p in self.players.values():
             p.hand = []
             p.deck = []

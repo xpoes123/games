@@ -9,8 +9,13 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.bridge.app import app as bridge_app
+from src.chess import persistence as chess_persistence
 from src.chess.app import app as chess_app
 from src.config import settings
+
+# Wire chess game persistence at import time so the schema is ready before
+# the first request lands. Empty path → no-op (tests, ephemeral dev).
+chess_persistence.configure(settings.chess_db_path or None)
 
 log = logging.getLogger("games")
 

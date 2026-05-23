@@ -182,12 +182,25 @@ function join() {
   connect(room, name);
 }
 
+const CLIENT_ID_KEY = "chess_client_id";
+function getClientId() {
+  let id = localStorage.getItem(CLIENT_ID_KEY);
+  if (!id) {
+    // 16 hex chars = 64 bits, plenty for anonymous identification.
+    id = Array.from(crypto.getRandomValues(new Uint8Array(8)))
+      .map(b => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem(CLIENT_ID_KEY, id);
+  }
+  return id;
+}
+
 function connect(room, name) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const url = new URL("ws", location.href);
   url.protocol = proto + ":";
   url.searchParams.set("room", room);
   url.searchParams.set("name", name);
+  url.searchParams.set("client_id", getClientId());
   ws = new WebSocket(url);
 
   ws.addEventListener("open", () => {

@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     port: int = 7781
     log_level: str = "info"
     public_base_url: str = "http://127.0.0.1:7781"
+    # SQLite path for chess game persistence. Empty disables persistence.
+    chess_db_path: str = ""
 
 
 settings = Settings()

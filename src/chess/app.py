@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.chess import persistence
 from src.chess.board import Piece
 from src.chess.cards import CARDS_BY_ID
 from src.chess.deck import Card
@@ -61,6 +62,45 @@ async def index() -> HTMLResponse:
 @app.get("/healthz")
 async def healthz() -> JSONResponse:
     return JSONResponse({"ok": True, "rooms": len(registry.rooms)})
+
+
+@app.get("/api/games")
+async def api_games(limit: int = 50, player_id: str | None = None) -> JSONResponse:
+    rows = persistence.list_games(limit=limit, player_id=player_id)
+    return JSONResponse({"games": rows})
+
+
+@app.get("/api/games/{slug}")
+async def api_game(slug: str) -> JSONResponse:
+    row = persistence.get_game(slug)
+    if row is None:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    return JSONResponse(row)
+
+
+def _render_static(filename: str) -> HTMLResponse:
+    path = STATIC_DIR / filename
+    if not path.exists():
+        return HTMLResponse(_PLACEHOLDER_HTML, status_code=404)
+    html = path.read_text()
+    # Same cache-busting strategy as the lobby page.
+    for asset in ("app.js", "style.css", "games.js", "replay.js"):
+        ap = STATIC_DIR / asset
+        if ap.exists():
+            v = int(ap.stat().st_mtime)
+            html = html.replace(f"/chess/static/{asset}",
+                                f"/chess/static/{asset}?v={v}")
+    return HTMLResponse(html)
+
+
+@app.get("/games")
+async def games_index() -> HTMLResponse:
+    return _render_static("games.html")
+
+
+@app.get("/replay/{slug}")
+async def replay_page(slug: str) -> HTMLResponse:
+    return _render_static("replay.html")
 
 
 def _debug_allowed() -> bool:
@@ -143,6 +183,7 @@ async def _send(player: Player, payload: dict) -> bool:
 
 
 async def _broadcast_state(room: Room) -> None:
+    _persist_tick(room)
     for p in list(room.players.values()):
         if p.ws is None:
             continue
@@ -304,6 +345,10 @@ async def _arm_turn_timer(room: Room) -> None:
 
 
 async def _broadcast_events(room: Room, events: list[dict]) -> None:
+    # Persist before broadcast — slug may not exist yet if the game just
+    # transitioned to PLAYING this dispatch, so _persist_tick first.
+    _persist_tick(room)
+    persistence.append_events(room.persistence_slug, events)
     for evt in events:
         for p in list(room.players.values()):
             if p.ws is None:
@@ -314,19 +359,47 @@ async def _broadcast_events(room: Room, events: list[dict]) -> None:
                 p.ws = None
 
 
+def _persist_tick(room: Room) -> None:
+    """Called after every state mutation. Creates a DB row the first time the
+    room enters PLAYING; finalizes it when a winner appears. Idempotent."""
+    if not persistence.enabled():
+        return
+    if room.persistence_slug is None and room.phase == Phase.PLAYING:
+        white = room.player_by_seat("white")
+        black = room.player_by_seat("black")
+        if white and black:
+            room.persistence_slug = persistence.create_game(
+                room_code=room.code,
+                white_name=white.name,
+                black_name=black.name,
+                white_player_id=white.client_id,
+                black_player_id=black.client_id,
+                white_setup=room.starting_setup_white,
+                black_setup=room.starting_setup_black,
+            )
+    if (room.persistence_slug
+            and not room.persistence_finalized
+            and room.winner is not None):
+        persistence.finalize_game(
+            room.persistence_slug, room.winner, room.win_reason,
+        )
+        room.persistence_finalized = True
+
+
 @app.websocket("/ws")
 async def chess_socket(ws: WebSocket) -> None:
     await ws.accept()
     params = ws.query_params
     code = (params.get("room") or "").upper().strip()
     name = (params.get("name") or "anon").strip()[:24] or "anon"
+    client_id = (params.get("client_id") or "").strip()[:64] or None
     if not code or len(code) > 8:
         await ws.close(code=4400, reason="room code required")
         return
 
     room = await registry.get_or_create(code)
     async with room.lock:
-        player = room.add_player(name=name, ws=ws)
+        player = room.add_player(name=name, ws=ws, client_id=client_id)
     await _send(player, {"type": "welcome", "your_seat": player.seat, "player_id": player.pid})
     await _broadcast_state(room)
     # Re-deliver any pending prompt addressed to the rejoining player so
