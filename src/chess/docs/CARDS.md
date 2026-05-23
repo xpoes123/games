@@ -51,8 +51,9 @@ Rook/Queen). The gold cost paid equals the chosen piece's normal cost
   (so a normal 1-step pawn move can be 2; if the pawn is on its 2-step
   starting rank, it can move up to 3 squares). Does not allow captures via
   the extra distance — captures still follow the diagonal rule.
-- **Gain 2 Gold** `spell_gain_2_gold` ×2 — +2 gold immediately this turn
-  (does not raise cap). Discardable into a 0-gold play.
+- **Gain 1 Gold** `spell_gain_2_gold` ×2 — cost 0. Gain 1 gold this turn;
+  can push you above your current gold cap. (The id keeps the legacy
+  `_2_` suffix from when this card gave 2 gold — engine + UI agree on 1.)
 - **Draw 2** `spell_draw_2` ×2 — draw 2 cards.
 
 ### 2 gold (3 unique × 2 copies = 6)
@@ -84,57 +85,56 @@ Rook/Queen). The gold cost paid equals the chosen piece's normal cost
   edge. **You cannot capture your opponent's king this turn.** (Affects
   both your normal chess move and any other movement effects this turn.)
 
-### 4 gold (6 cards = 3×2)
+### 4 gold (4 unique × 2 = 8)
 
 - **Spell Tax** `spell_tax_opponent` ×2 — opponent's spell cards cost +3
   gold during their **next** turn. (Piece cards are unaffected.) Stacks if
   multiple are cast.
 - **Pawn-into-Rook** `spell_pawn_to_rook` ×2 — select friendly pawn, remove
   it. Place a rook in your back 2 ranks.
-- **Remove a Minor** `spell_remove_minor` ×2 — pick any knight or bishop
-  on the board (either side). Remove it. (Use this defensively or
-  aggressively.)
+- **Remove a Minor (Draw 1)** `spell_remove_minor` ×2 — pick any knight or
+  bishop on the board (either side). Remove it; draw 1 card.
+- **Forced Promotion** `spell_forced_promotion` ×2 — pick one of your own
+  pawns. Your **opponent** chooses Knight or Bishop (modal prompt to them,
+  30s timeout → default Knight). The pawn transforms into that piece in
+  place.
 
-### 5 gold (6 cards = 3×2)
+### 5 gold (2 unique × 2 = 4)
 
-- **Two Minors, Opp Picks** `spell_two_minors_opp_picks` ×2 — opponent
-  chooses Knight or Bishop. Place 2 of that kind in your back 2 ranks.
-  Opponent's choice is a synchronous prompt (their UI gets a modal). If
-  they don't answer in 30s, default = Knight.
 - **Discard for Draw** `spell_discard_draw` ×2 — choose a subset of your
   hand (the just-played card is already gone). Discard them; draw one card
   per discard.
-### 6 gold (6 cards = 3×2)
+- **King to Center (Draw 1)** `spell_king_to_center` ×2 — pick a king
+  (either side), pick an empty central square (d4, d5, e4, e5). Move the
+  king there; draw 1 card. **Counts as your move.** Cannot capture
+  opponent's king via this card.
 
-- **King to Center** `spell_king_to_center` ×2 — pick a king (either side),
-  pick an empty central square (d4, d5, e4, e5). Move the king there.
-  **Counts as your move.** Cannot capture opponent's king (you can't move
-  enemy king onto a square attacking your king if it would chain, etc. —
-  just enforce: target square must be empty, and the king arrives there).
+### 6 gold (2 unique × 2 = 4)
+
 - **Draw to Hand Doubled** `spell_draw_double` ×2 — draw N cards, where N
   is your current hand size at the moment of resolution (post-cast).
   Cap at hand-cap 10.
 - **5 Pawns → Queen** `spell_pawns_to_queen` ×2 — requires ≥5 friendly pawns
   on the board. Remove ALL your pawns; place a queen in your back 2 ranks.
 
-### 7 gold (6 cards = 3×2)
+### 7 gold (2 unique × 2 = 4)
 
 - **7 Material → Queen** `spell_material_to_queen` ×2 — pick friendly
   non-king pieces totaling **exactly 7** points of material (pawn=1,
   knight=2, bishop=3, rook=5, queen=8 — using card costs as point values).
   Remove them; place a queen in your back 2 ranks. If you can't reach
   exactly 7, the card can't be played.
-- **Convert Piece** `spell_convert_piece` ×2 — pick an opponent's non-king
-  piece. It becomes yours (same kind, same square). **Counts as your move.**
 - **Triple Move** `spell_triple_move` ×2 — this turn, your chess-move
   allowance is set to 3 (replacing 1, additive with any extras already
   granted? — set to **3** flat). **Cannot capture opponent's king this turn.**
 
-### 8 gold (6 cards = 3×2)
+### 8 gold (5 unique × 2 = 10)
 
 - **Teleport** `spell_teleport` ×2 — pick one of your pieces, pick any
   empty square. Move it there. **Counts as your move.** Cannot capture the
   opponent's king via teleport (and the target must be empty).
+- **Convert Piece** `spell_convert_piece` ×2 — pick an opponent's non-king
+  piece. It becomes yours (same kind, same square). **Counts as your move.**
 - **Rook + Minor** `spell_rook_and_minor` ×2 — place a rook AND a knight-or-
   bishop (modal). Both in your back 2 ranks.
 - **Pawn/Rook on Enemy Rank** `spell_deploy_enemy_rank` ×2 — place a pawn
@@ -167,14 +167,16 @@ Rook/Queen). The gold cost paid equals the chosen piece's normal cost
 - **Quadruple Deploy** `spell_quad_deploy` — place a knight, a bishop, a
   rook, AND a pawn (in that order) in your back 2 ranks.
 - **Extra Turn** `spell_extra_turn` — take another full turn after this one
-  ends, **at the same gold cap** (gold refreshes at upkeep of the bonus
-  turn, draw still happens). **Cannot capture opponent's king during the
-  bonus turn.**
+  ends. The bonus turn has a **hard gold cap of 5** (regardless of your
+  current cap); your normal turn order resumes after. **Cannot capture
+  opponent's king during the bonus turn.**
 - **Queen + Strip Material** `spell_queen_and_strip` — place a queen in your
   back 2 ranks. Then remove ≤4 points of opponent material (pawn=1, etc.,
   total ≤ 4, your choice of pieces; non-king).
-- **Discard Hand, Draw 3** `spell_discard_opp_hand` — opponent discards
-  their entire hand, then draws 3.
+- **Echo** `spell_echo` — opponent reveals their hand to you; pick one of
+  their cards. It moves to your hand (burned if your hand is at cap). You
+  do **not** play it for free — it just becomes yours to play normally on
+  a future turn.
 - **Free Pieces** `spell_free_pieces` — draw 5. Until end of turn, **all
   piece cards you play cost 0 gold.**
 

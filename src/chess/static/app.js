@@ -57,7 +57,7 @@ const CARD_EFFECTS = {
   spell_quad_deploy: "Place a knight, bishop, rook, and pawn in your back two ranks.",
   spell_extra_turn: "Take another turn after this one (gold capped at 5). Cannot capture king.",
   spell_queen_and_strip: "Place a queen, then remove ≤4 material from enemy.",
-  spell_echo: "Look at opponent's hand. Pick one card; you steal it AND immediately play it for free.",
+  spell_echo: "Look at opponent's hand. Pick one card; it moves to your hand (burned if you're at hand cap).",
   spell_free_pieces: "Draw 5. Piece cards cost 0 this turn.",
 };
 
