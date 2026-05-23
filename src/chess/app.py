@@ -78,13 +78,28 @@ async def api_game(slug: str) -> JSONResponse:
     return JSONResponse(row)
 
 
+@app.get("/api/leaderboard")
+async def api_leaderboard(limit: int = 50, min_games: int = 3) -> JSONResponse:
+    rows = persistence.leaderboard(limit=limit, min_games=min_games)
+    return JSONResponse({"players": rows})
+
+
+@app.get("/api/players/{client_id}")
+async def api_player(client_id: str) -> JSONResponse:
+    row = persistence.get_player(client_id)
+    if row is None:
+        # 200 with null so the lobby can show "unrated" without exception-handling.
+        return JSONResponse({"player": None})
+    return JSONResponse({"player": row})
+
+
 def _render_static(filename: str) -> HTMLResponse:
     path = STATIC_DIR / filename
     if not path.exists():
         return HTMLResponse(_PLACEHOLDER_HTML, status_code=404)
     html = path.read_text()
     # Same cache-busting strategy as the lobby page.
-    for asset in ("app.js", "style.css", "games.js", "replay.js"):
+    for asset in ("app.js", "style.css", "games.js", "replay.js", "leaderboard.js"):
         ap = STATIC_DIR / asset
         if ap.exists():
             v = int(ap.stat().st_mtime)
@@ -96,6 +111,11 @@ def _render_static(filename: str) -> HTMLResponse:
 @app.get("/games")
 async def games_index() -> HTMLResponse:
     return _render_static("games.html")
+
+
+@app.get("/leaderboard")
+async def leaderboard_page() -> HTMLResponse:
+    return _render_static("leaderboard.html")
 
 
 @app.get("/replay/{slug}")

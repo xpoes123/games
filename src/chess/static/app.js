@@ -194,6 +194,23 @@ function getClientId() {
   return id;
 }
 
+// Populate the "you: handle  N games · NNNN" badge on the entry screen.
+(async () => {
+  const youRatingEl = document.getElementById("you-rating");
+  if (!youRatingEl) return;
+  try {
+    const res = await fetch(`/chess/api/players/${getClientId()}`);
+    const { player } = await res.json();
+    if (!player) {
+      youRatingEl.textContent = "unrated — play a game to get on the board";
+      return;
+    }
+    const wl = `${player.wins}W ${player.losses}L`;
+    youRatingEl.textContent =
+      `${player.handle} · ${player.rating} · ${wl} (${player.games_played})`;
+  } catch (_) { /* silent — lobby still usable without rating */ }
+})();
+
 function connect(room, name) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const url = new URL("ws", location.href);

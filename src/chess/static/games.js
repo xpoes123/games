@@ -27,6 +27,28 @@ function fmtDuration(start, end) {
   return m + "m" + (s % 60 ? " " + (s % 60) + "s" : "");
 }
 
+function ratingDeltaFor(r, clientId) {
+  // Returns {pre, post, delta} for whichever side matches clientId, or null.
+  if (!clientId) return null;
+  if (r.white_player_id === clientId
+      && r.white_rating_pre != null && r.white_rating_post != null) {
+    return { pre: r.white_rating_pre, post: r.white_rating_post,
+             delta: r.white_rating_post - r.white_rating_pre };
+  }
+  if (r.black_player_id === clientId
+      && r.black_rating_pre != null && r.black_rating_post != null) {
+    return { pre: r.black_rating_pre, post: r.black_rating_post,
+             delta: r.black_rating_post - r.black_rating_pre };
+  }
+  return null;
+}
+
+function fmtDelta(d) {
+  if (!d) return "";
+  const sign = d.delta > 0 ? "+" : "";
+  return `<span class="delta ${d.delta > 0 ? "pos" : d.delta < 0 ? "neg" : ""}">${sign}${d.delta} → ${d.post}</span>`;
+}
+
 function renderGames(rows) {
   countEl.textContent = `(${rows.length})`;
   if (rows.length === 0) {
@@ -35,7 +57,7 @@ function renderGames(rows) {
   }
   const headers = `<tr>
     <th>code</th><th>white</th><th>black</th><th>winner</th>
-    <th>reason</th><th>length</th><th>when</th>
+    <th>reason</th><th>length</th><th>Δ (you)</th><th>when</th>
   </tr>`;
   const body = rows.map(r => {
     const winnerCls = r.winner === "white" ? "w" : r.winner === "black" ? "b" : "";
@@ -43,6 +65,7 @@ function renderGames(rows) {
       : r.winner === "black" ? r.black_name
       : "—";
     const meTag = (r.white_player_id === myId || r.black_player_id === myId) ? " ★" : "";
+    const delta = fmtDelta(ratingDeltaFor(r, myId));
     return `<tr>
       <td class="slug"><a href="/chess/replay/${r.slug}">${r.slug}</a>${meTag}</td>
       <td>${escapeHtml(r.white_name)}</td>
@@ -50,6 +73,7 @@ function renderGames(rows) {
       <td class="winner ${winnerCls}">${escapeHtml(winnerName)}</td>
       <td>${escapeHtml(r.win_reason || "—")}</td>
       <td>${fmtDuration(r.started_at, r.ended_at)}</td>
+      <td>${delta}</td>
       <td>${fmtTs(r.ended_at)}</td>
     </tr>`;
   }).join("");

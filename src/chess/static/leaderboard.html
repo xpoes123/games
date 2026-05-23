@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>chess — leaderboard</title>
+  <link rel="stylesheet" href="/chess/static/style.css" />
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    main { max-width: 640px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { font-size: 1.2rem; margin: 0 0 1rem; }
+    .blurb { color: var(--muted, #565f89); font-size: 0.8rem; margin: 0 0 1.25rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.55rem 0.5rem;
+      border-bottom: 1px solid var(--border, #414868); font-size: 0.85rem;
+      font-variant-numeric: tabular-nums; }
+    th { color: var(--muted, #565f89); font-weight: 500; }
+    td.rank { color: var(--muted, #565f89); width: 2rem; }
+    td.handle { font-weight: 600; }
+    td.rating { color: var(--accent, #7aa2f7); font-weight: 600; }
+    td.you { background: rgba(122,162,247,0.10); }
+    .empty { padding: 2rem 0; color: var(--muted, #565f89); text-align: center; }
+    .hint { color: var(--muted, #565f89); font-size: 0.8rem; margin-top: 1.5rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>leaderboard</h1>
+    <p class="blurb">K=32 Elo, default 1000. Hidden until you've played 3 games.</p>
+    <div id="host"></div>
+    <p class="hint">
+      <a href="/chess/games">past games</a> ·
+      <a href="/chess/">play</a> ·
+      <a href="/">all games</a>
+    </p>
+  </main>
+  <script src="/chess/static/leaderboard.js"></script>
+</body>
+</html>

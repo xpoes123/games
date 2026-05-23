@@ -22,6 +22,9 @@
     td.slug a:hover { text-decoration: underline; }
     td.winner.w { color: #e0af68; }
     td.winner.b { color: #9ece6a; }
+    .delta { font-variant-numeric: tabular-nums; }
+    .delta.pos { color: #9ece6a; }
+    .delta.neg { color: #f7768e; }
     .empty { padding: 2rem 0; color: var(--muted, #565f89); text-align: center; }
     .hint { color: var(--muted, #565f89); font-size: 0.8rem; margin-top: 1.5rem; }
   </style>
@@ -36,7 +39,11 @@
       <span id="count"></span>
     </div>
     <div id="table-host"></div>
-    <p class="hint"><a href="/chess/">back to lobby</a> · <a href="/">all games</a></p>
+    <p class="hint">
+      <a href="/chess/leaderboard">leaderboard</a> ·
+      <a href="/chess/">back to lobby</a> ·
+      <a href="/">all games</a>
+    </p>
   </main>
   <script src="/chess/static/games.js"></script>
 </body>
