@@ -231,6 +231,10 @@ function connect(room, name) {
 
 // ---- top buttons ----
 
+const SOUND_KEY = "chess_sound_on";
+let audioCtx = null;
+let soundOn = localStorage.getItem(SOUND_KEY) !== "off";
+
 const soundBtn = $("sound-btn");
 function refreshSoundBtn() {
   if (soundBtn) soundBtn.textContent = "sound: " + (soundOn ? "on" : "off");
@@ -457,10 +461,6 @@ function maybeAutoEchoCast() {
 }
 
 // ---- sound (synthesized via WebAudio, no asset files) ----
-
-const SOUND_KEY = "chess_sound_on";
-let audioCtx = null;
-let soundOn = localStorage.getItem(SOUND_KEY) !== "off";
 
 function ensureAudio() {
   if (audioCtx) return audioCtx;
