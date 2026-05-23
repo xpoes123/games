@@ -81,8 +81,6 @@ CARD_DEFS: list[CardDef] = [
     # ---- 5-gold (4) ----
     CardDef("spell_discard_draw", "Discard for Draw", 5, "spell", 2, "spell_discard_draw",
             ("discard_subset",)),
-    CardDef("spell_teleport", "Teleport", 5, "spell", 2, "spell_teleport",
-            ("friendly_piece", "any_empty_square"), tags=("counts_as_move",)),
     CardDef("spell_king_to_center", "King to Center (Draw 1)", 5, "spell", 2, "spell_king_to_center",
             ("any_piece_kind", "empty_square_central4"),
             tags=("no_king_capture",)),
@@ -99,6 +97,8 @@ CARD_DEFS: list[CardDef] = [
             tags=("no_king_capture",)),
 
     # ---- 8-gold (6) ----
+    CardDef("spell_teleport", "Teleport", 8, "spell", 2, "spell_teleport",
+            ("friendly_piece", "any_empty_square"), tags=("counts_as_move",)),
     CardDef("spell_convert_piece", "Convert Piece", 8, "spell", 2, "spell_convert_piece",
             ("enemy_piece",), tags=("counts_as_move",)),
     CardDef("spell_rook_and_minor", "Rook + Minor", 8, "spell", 2, "spell_rook_and_minor",

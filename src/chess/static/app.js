@@ -687,7 +687,7 @@ const CARD_NAMES = {
   spell_remove_minor: { name: "Remove a Minor", cost: 4 },
   spell_forced_promotion: { name: "Forced Promotion", cost: 4 },
   spell_discard_draw: { name: "Discard for Draw", cost: 5 },
-  spell_teleport: { name: "Teleport", cost: 5 },
+  spell_teleport: { name: "Teleport", cost: 8 },
   spell_king_to_center: { name: "King to Center", cost: 5 },
   spell_draw_double: { name: "Draw Hand Doubled", cost: 6 },
   spell_pawns_to_queen: { name: "5 Pawns into Queen", cost: 6 },

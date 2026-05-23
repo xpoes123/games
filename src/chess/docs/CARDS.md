@@ -104,10 +104,6 @@ Rook/Queen). The gold cost paid equals the chosen piece's normal cost
 - **Discard for Draw** `spell_discard_draw` ×2 — choose a subset of your
   hand (the just-played card is already gone). Discard them; draw one card
   per discard.
-- **Teleport** `spell_teleport` ×2 — pick one of your pieces, pick any
-  empty square. Move it there. **Counts as your move.** Cannot capture the
-  opponent's king via teleport (and the target must be empty).
-
 ### 6 gold (6 cards = 3×2)
 
 - **King to Center** `spell_king_to_center` ×2 — pick a king (either side),
@@ -136,6 +132,9 @@ Rook/Queen). The gold cost paid equals the chosen piece's normal cost
 
 ### 8 gold (6 cards = 3×2)
 
+- **Teleport** `spell_teleport` ×2 — pick one of your pieces, pick any
+  empty square. Move it there. **Counts as your move.** Cannot capture the
+  opponent's king via teleport (and the target must be empty).
 - **Rook + Minor** `spell_rook_and_minor` ×2 — place a rook AND a knight-or-
   bishop (modal). Both in your back 2 ranks.
 - **Pawn/Rook on Enemy Rank** `spell_deploy_enemy_rank` ×2 — place a pawn
