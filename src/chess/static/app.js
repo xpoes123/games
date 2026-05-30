@@ -103,6 +103,9 @@ const cancelTargetingBtn = $("cancel-targeting-btn");
 const mulliganWait = $("mulligan-wait");
 const timerDots = $("timer-dots");
 const timerNum = $("timer-num");
+const bigTimer = $("big-timer");
+const bigTimerNum = $("big-timer-num");
+let lastTickSec = null;  // last second we played a countdown tick for
 
 const boardEl = $("board");
 const tweenLayerEl = $("tween-layer");
@@ -565,7 +568,9 @@ const sfx = {
                    setTimeout(() => playTone({ freq: 740, dur: 0.20, gain: 0.16, type: "triangle" }), 140); },
   kingCap: () => { playTone({ freq: 520, dur: 0.35, gain: 0.22, type: "sawtooth", glide: 140 });
                    setTimeout(() => playTone({ freq: 220, dur: 0.45, gain: 0.20, type: "sine", glide: 90 }), 260); },
-  turn:    () => playTone({ freq: 660, dur: 0.10, gain: 0.10, type: "sine" }),
+  turn:    () => { playTone({ freq: 660, dur: 0.10, gain: 0.11, type: "sine" });
+                   setTimeout(() => playTone({ freq: 880, dur: 0.12, gain: 0.10, type: "sine" }), 90); },
+  tick:    () => playClick({ freq: 1000, dur: 0.03, gain: 0.11, kind: "tap" }),
 };
 
 // ---- animations / events ----
@@ -2295,6 +2300,28 @@ function modalOptionsForCard(card_id) {
 
 // ---- timer ----
 
+// Drive the prominent above-board countdown. `mine` controls urgency
+// coloring + the ticking sound — we only nag you about your own clock.
+function renderBig(left, mine, ticking) {
+  bigTimer.hidden = false;
+  const mm = Math.floor(left / 60), ss = left % 60;
+  bigTimerNum.textContent = `${mm}:${ss.toString().padStart(2, "0")}`;
+  bigTimer.classList.toggle("mine", mine && left > 25);
+  bigTimer.classList.toggle("warn", mine && left <= 25 && left > 10);
+  bigTimer.classList.toggle("low", mine && left <= 10);
+  if (ticking && mine && left <= 10 && left >= 1 && left !== lastTickSec) {
+    sfx.tick();
+    lastTickSec = left;
+  }
+  if (!mine || left > 10) lastTickSec = null;
+}
+
+function hideBig() {
+  bigTimer.hidden = true;
+  bigTimer.classList.remove("mine", "warn", "low");
+  lastTickSec = null;
+}
+
 function updateTimer(deadlineMs) {
   if (timerHandle) { clearInterval(timerHandle); timerHandle = null; }
   // Setup-phase deadline takes precedence during SETUP.
@@ -2313,6 +2340,8 @@ function updateTimer(deadlineMs) {
         if (i === 0 && left <= 36 && filled === 1) d.classList.add("low");
         timerDots.appendChild(d);
       }
+      // Setup deadline applies to both sides — treat as "mine" for urgency.
+      renderBig(left, true, false);
     }
     tickSetup();
     timerHandle = setInterval(tickSetup, 500);
@@ -2334,6 +2363,8 @@ function updateTimer(deadlineMs) {
         if (i === 0 && left <= 6 && filled === 1) d.classList.add("low");
         timerDots.appendChild(d);
       }
+      // Waiting on the opponent's decision — show it but don't nag with ticks.
+      renderBig(left, false, false);
     }
     tickOpp();
     timerHandle = setInterval(tickOpp, 500);
@@ -2342,8 +2373,11 @@ function updateTimer(deadlineMs) {
   if (!deadlineMs) {
     timerDots.innerHTML = "";
     timerNum.textContent = "—";
+    hideBig();
     return;
   }
+  const mine = !!(lastState && lastState.active_seat === mySeat
+                  && lastState.phase === "PLAYING");
   function tick() {
     const left = Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000));
     timerNum.textContent = left + "s";
@@ -2356,6 +2390,7 @@ function updateTimer(deadlineMs) {
       if (i === 0 && low && filled === 1) d.classList.add("low");
       timerDots.appendChild(d);
     }
+    renderBig(left, mine, true);
   }
   tick();
   timerHandle = setInterval(tick, 500);

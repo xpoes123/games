@@ -19,8 +19,9 @@
   --board-size: 480px;
   --sq-size: 60px;
 
-  --card-w: 92px;
-  --card-h: 130px;
+  --card-w: 110px;
+  --card-h: 154px;
+  --card-text: #aab4e8;
 }
 
 * { box-sizing: border-box; }
@@ -117,7 +118,7 @@ button.warn { border-color: var(--warn); color: var(--warn); }
 #board-area {
   display: grid;
   grid-template-columns: 280px var(--board-size) 1fr;
-  grid-template-rows: auto auto auto;
+  grid-template-rows: auto auto auto auto;
   gap: 0.6rem 0.8rem;
   padding: 0.6rem 1rem;
   align-items: start;
@@ -130,11 +131,28 @@ button.warn { border-color: var(--warn); color: var(--warn); }
   visibility: hidden;
 }
 
-#log-panel  { grid-column: 1; grid-row: 1 / span 3; align-self: stretch; }
+#log-panel  { grid-column: 1; grid-row: 1 / span 4; align-self: stretch; }
 #opp-panel  { grid-column: 2; grid-row: 1; }
-#board-wrap { grid-column: 2; grid-row: 2; }
-#you-panel  { grid-column: 2; grid-row: 3; }
-#side-panel { grid-column: 3; grid-row: 1 / span 3; align-self: stretch; }
+#big-timer  { grid-column: 2; grid-row: 2; }
+#board-wrap { grid-column: 2; grid-row: 3; }
+#you-panel  { grid-column: 2; grid-row: 4; }
+#side-panel { grid-column: 3; grid-row: 1 / span 4; align-self: stretch; }
+
+/* Prominent turn countdown directly above the board. Flat per the house
+   style — just a large monospace number that shifts amber→red as it runs
+   down. Hidden unless a live deadline is showing. */
+#big-timer {
+  display: flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.9rem; font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  min-height: 1.6em;
+}
+#big-timer[hidden] { display: none; }
+#big-timer.mine { color: var(--fg); }
+#big-timer.warn { color: var(--warn); }
+#big-timer.low  { color: var(--bad); }
 
 /* ---- panels ---- */
 
@@ -457,7 +475,7 @@ button.warn { border-color: var(--warn); color: var(--warn); }
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--bg);
 }
-.card:hover .effect-text { font-size: 0.62rem; }
+.card:hover .effect-text { font-size: 0.66rem; }
 .card.unaffordable:hover { opacity: 0.85; }
 .card .cost {
   position: absolute; top: 3px; left: 3px;
@@ -469,7 +487,7 @@ button.warn { border-color: var(--warn); color: var(--warn); }
 }
 .card .name {
   margin-top: 16px;
-  font-size: 0.68rem; text-align: center;
+  font-size: 0.74rem; text-align: center;
   color: var(--fg);
   line-height: 1.15;
   min-height: 1.6em;
@@ -485,9 +503,9 @@ button.warn { border-color: var(--warn); color: var(--warn); }
 .card .effect-text {
   flex: 1;
   display: flex; align-items: center; justify-content: center; text-align: center;
-  font-size: 0.6rem; color: var(--muted);
+  font-size: 0.66rem; color: var(--card-text);
   padding: 0 2px;
-  line-height: 1.18;
+  line-height: 1.2;
   overflow: hidden;
   width: 100%;
 }

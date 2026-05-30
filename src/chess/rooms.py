@@ -144,9 +144,14 @@ class LogEntry:
 
 
 class Room:
-    def __init__(self, code: str, rng: random.Random | None = None) -> None:
+    def __init__(self, code: str, rng: random.Random | None = None,
+                 seat_rng: random.Random | None = None) -> None:
         self.code = code
         self.rng = rng or random.Random()
+        # Separate RNG for the white/black coin flip, kept out of self.rng so
+        # randomizing sides never perturbs the (seeded, testable) deck deal.
+        # None → deterministic (first joiner = white), used by tests.
+        self.seat_rng = seat_rng
         self.players: dict[str, Player] = {}      # pid -> Player
         self.seats: dict[str, str] = {}           # "white"/"black" -> pid
         self.phase: Phase = Phase.LOBBY
@@ -164,6 +169,10 @@ class Room:
         # rooms.py never touches the DB directly; app.py owns the side effects.
         self.persistence_slug: str | None = None
         self.persistence_finalized: bool = False
+        # Count of events appended to the durable event_log so far. Tracked
+        # here so undo can roll the persisted replay log back in lockstep with
+        # the in-memory state it reverts (app.py increments after each append).
+        self.persisted_event_count: int = 0
         # Snapshot of each side's 8-point setup, captured at setup_confirm
         # (before _apply_setup_to_board clears player.setup_picks).
         self.starting_setup_white: list[dict] = []
@@ -233,16 +242,22 @@ class Room:
                     except Exception:
                         pass
                 return held
-        # Otherwise: claim the first free seat, else spectate.
+        # Otherwise: claim a free seat, else spectate. The first player picks a
+        # random side (when seat_rng is set) so the lobby creator isn't always
+        # white — the seat is final at join time, so each player is told the
+        # right side immediately (no post-join swap to desync the first one).
         pid = secrets.token_hex(8)
-        if "white" not in self.seats or self.players.get(self.seats["white"]) is None:
-            seat: Seat = "white"
-            self.seats["white"] = pid
-        elif "black" not in self.seats or self.players.get(self.seats["black"]) is None:
-            seat = "black"
-            self.seats["black"] = pid
-        else:
+        free = [s for s in ("white", "black")
+                if s not in self.seats or self.players.get(self.seats[s]) is None]
+        seat: Seat
+        if not free:
             seat = "spectator"
+        elif len(free) == 2 and self.seat_rng is not None:
+            seat = "white" if self.seat_rng.random() < 0.5 else "black"
+            self.seats[seat] = pid
+        else:
+            seat = free[0]  # deterministic: white first, else the remaining seat
+            self.seats[seat] = pid
         player = Player(pid=pid, name=name, seat=seat, ws=ws, client_id=client_id)
         self.players[pid] = player
         # If both seats just filled, deal the starting hands and enter MULLIGAN.
@@ -433,6 +448,10 @@ class Room:
         white.gold_cap = 1
         white.gold = 1
         white.moves_remaining = 1
+        # Start the turn clock for white's first turn; without this the
+        # deadline is computed from turn_started_ms=0 (epoch) and the timer
+        # shows 0:00 until the first action.
+        self.turn_started_ms = self.now_ms()
         self._log("turn 1 — white")
 
     # ---- turn machine ----
@@ -1001,6 +1020,7 @@ class Room:
             "opp_chosen_flag": opp.opp_moves_chosen_by_me_next_turn if opp else False,
             "extra_turn_queued": p.extra_turn_queued,
             "log_len": len(self.log),
+            "persisted_event_count": self.persisted_event_count,
         }
 
     def undo_move(self, seat: str) -> str | None:
@@ -1049,6 +1069,10 @@ class Room:
         self.pending_card_play = None
         self.undo_snapshot = None
         self.last_move = None
+        # Roll the persisted-event counter back to its pre-action value; app.py
+        # truncates the durable event_log to this length so replays don't
+        # replay the move we just undid.
+        self.persisted_event_count = snap["persisted_event_count"]
         self._log(f"{seat} undoes last action")
         return None
 
@@ -1655,7 +1679,7 @@ class RoomRegistry:
         async with self.lock:
             r = self.rooms.get(code)
             if r is None:
-                r = Room(code=code)
+                r = Room(code=code, seat_rng=random.Random())
                 self.rooms[code] = r
             return r
 

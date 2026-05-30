@@ -149,6 +149,22 @@ def append_events(slug: str | None, events: list[dict]) -> None:
                   (json.dumps(log), slug))
 
 
+def truncate_events(slug: str | None, count: int) -> None:
+    """Drop events past `count` from the durable log. Called on undo so an
+    undone action's already-persisted events don't corrupt the replay."""
+    if not enabled() or not slug:
+        return
+    with _conn() as c:
+        row = c.execute("SELECT event_log FROM games WHERE slug=?", (slug,)).fetchone()
+        if row is None:
+            return
+        log = json.loads(row[0])
+        if len(log) <= count:
+            return
+        c.execute("UPDATE games SET event_log=? WHERE slug=?",
+                  (json.dumps(log[:count]), slug))
+
+
 def finalize_game(slug: str | None, winner: str | None, win_reason: str | None) -> None:
     """Mark a game as ended, then update Elo for both sides if both have
     client_ids (and they aren't the same). Skip rating updates silently when

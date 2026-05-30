@@ -300,11 +300,18 @@ def test_spell_convert_piece_flips_color():
     r, w, b = _setup()
     r.board.place("e4", Piece("black", "knight"))
     pre_moves = w.moves_remaining
-    _, err = _play(r, "white", "spell_convert_piece", [{"square": "e4"}])
+    events, err = _play(r, "white", "spell_convert_piece", [{"square": "e4"}])
     assert err is None
     assert r.board.at("e4").color == "white"
     assert r.board.at("e4").kind == "knight"
     assert w.moves_remaining == pre_moves - 1
+    # Replay reconstructs from the event log, so the event must carry the
+    # "piece_converted" kind (regression: a duplicate "kind" key once
+    # clobbered it with the piece type, so replays never recolored).
+    conv = [e for e in events if e.get("kind") == "piece_converted"]
+    assert len(conv) == 1
+    assert conv[0]["to_color"] == "white"
+    assert conv[0]["piece_kind"] == "knight"
 
 
 def test_spell_triple_move_sets_three_moves_no_king_cap():

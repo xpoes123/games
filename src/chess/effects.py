@@ -151,7 +151,7 @@ def resolve(room: "Room", player: "Player", pending: "PendingPlay") -> list[dict
         if pc is None:
             return []
         pc.color = player.seat  # type: ignore[assignment]
-        return [{"kind": "piece_converted", "sq": sq, "to_color": player.seat, "kind": pc.kind}]
+        return [{"kind": "piece_converted", "sq": sq, "to_color": player.seat, "piece_kind": pc.kind}]
     if key == "spell_triple_move":
         player.moves_remaining = 3
         player.cannot_capture_king_this_turn = True

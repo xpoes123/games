@@ -66,6 +66,40 @@ def test_create_append_finalize_roundtrip(tmp_path):
     assert row["event_log"][-1]["kind"] == "king_captured"
 
 
+def test_truncate_events_drops_undone_action(tmp_path):
+    """Reproduces the replay corruption: a move is persisted, undone (which
+    truncates the log back), then a different move is persisted. The undone
+    move must not survive in the event_log — otherwise the replay applies a
+    phantom move and pieces vanish."""
+    _configure(tmp_path)
+    slug = persistence.create_game(
+        room_code="X", white_name="a", black_name="b",
+        white_player_id=None, black_player_id=None,
+        white_setup=[], black_setup=[],
+    )
+    # Two events already committed this turn.
+    persistence.append_events(slug, [
+        {"kind": "piece_moved", "from": "e1", "to": "f2"},
+        {"kind": "turn_end", "next": "black", "turn_number": 2},
+    ])
+    # White acts: the phantom move that later gets undone.
+    persistence.append_events(slug, [{"kind": "piece_moved", "from": "f3", "to": "f4"}])
+    assert len(persistence.get_game(slug)["event_log"]) == 3
+    # Undo → truncate back to the pre-action count (2).
+    persistence.truncate_events(slug, 2)
+    # The real move replaces it.
+    persistence.append_events(slug, [{"kind": "piece_moved", "from": "f3", "to": "g3"}])
+
+    log = persistence.get_game(slug)["event_log"]
+    assert len(log) == 3
+    assert log[-1] == {"kind": "piece_moved", "from": "f3", "to": "g3"}
+    assert all(e.get("to") != "f4" for e in log)  # phantom gone
+
+    # Truncating to >= current length is a no-op.
+    persistence.truncate_events(slug, 99)
+    assert len(persistence.get_game(slug)["event_log"]) == 3
+
+
 def test_list_games_filters_by_player_id(tmp_path):
     _configure(tmp_path)
     a = persistence.create_game(

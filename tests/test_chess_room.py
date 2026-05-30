@@ -32,6 +32,36 @@ def test_room_pairs_white_and_black_on_join():
     assert len(p2.hand) == 4
 
 
+class _Coin:
+    def __init__(self, value: float):
+        self._v = value
+
+    def random(self) -> float:
+        return self._v
+
+
+def test_seat_rng_gives_creator_black_on_high_roll():
+    # random() >= 0.5 → the first joiner (lobby creator) takes black, and the
+    # second joiner gets white. Each player is told their final seat at join
+    # time, and the deck deal stays keyed to seat (white draws 3, black 4).
+    r = Room(code="TEST", rng=random.Random(1), seat_rng=_Coin(0.9))
+    p1 = r.add_player("Alice")
+    p2 = r.add_player("Bob")
+    assert p1.seat == "black"
+    assert p2.seat == "white"
+    assert r.player_by_seat("white") is p2
+    assert len(p1.hand) == 4  # black
+    assert len(p2.hand) == 3  # white
+
+
+def test_seat_rng_gives_creator_white_on_low_roll():
+    r = Room(code="TEST", rng=random.Random(1), seat_rng=_Coin(0.1))
+    p1 = r.add_player("Alice")
+    p2 = r.add_player("Bob")
+    assert p1.seat == "white"
+    assert p2.seat == "black"
+
+
 def test_setup_phase_places_starting_material():
     r = Room(code="TEST", rng=random.Random(7))
     w = r.add_player("W")

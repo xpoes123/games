@@ -369,6 +369,8 @@ async def _broadcast_events(room: Room, events: list[dict]) -> None:
     # transitioned to PLAYING this dispatch, so _persist_tick first.
     _persist_tick(room)
     persistence.append_events(room.persistence_slug, events)
+    if room.persistence_slug:
+        room.persisted_event_count += len(events)
     for evt in events:
         for p in list(room.players.values()):
             if p.ws is None:
@@ -561,6 +563,7 @@ async def _dispatch(room: Room, player: Player, msg: dict) -> None:
         if err:
             await _send(player, {"type": "error", "text": err})
             return
+        persistence.truncate_events(room.persistence_slug, room.persisted_event_count)
         await _broadcast_state(room)
         return
 
