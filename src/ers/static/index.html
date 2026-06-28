@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>math ers</title>
+<style>
+  :root { color-scheme: dark; --bg:#1a1b26; --fg:#c0caf5; --muted:#565f89;
+          --border:#414868; --accent:#7aa2f7; --panel:#24283b; --good:#9ece6a;
+          --bad:#f7768e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         background:var(--bg); color:var(--fg); font-size:14px; }
+  main { max-width:640px; margin:0 auto; padding:2rem 1.25rem; }
+  h1 { font-size:1.3rem; font-weight:600; margin:0 0 1.25rem; }
+  input, button, select { font:inherit; }
+  select { background:var(--panel); border:1px solid var(--border); color:var(--fg);
+           padding:.35rem .4rem; }
+  label { color:var(--muted); display:flex; gap:.4rem; align-items:center; }
+  input { background:var(--panel); border:1px solid var(--border); color:var(--fg);
+          padding:.5rem .6rem; }
+  button { background:var(--panel); border:1px solid var(--border); color:var(--fg);
+           padding:.5rem .9rem; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+  button:disabled { opacity:.4; cursor:default; }
+  .row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+  #players { list-style:none; padding:0; margin:1rem 0; display:grid; gap:.4rem; }
+  #players li { padding:.5rem .75rem; background:var(--panel); border:1px solid var(--border);
+                display:flex; justify-content:space-between; }
+  #players li.turn { border-color:var(--accent); }
+  #pile { text-align:center; margin:1.5rem 0; }
+  #card { font-size:4rem; font-weight:700; min-height:5rem; }
+  #card.slappable { color:var(--good); }
+  .big { font-size:1.1rem; padding:1rem 2rem; }
+  #slap { background:var(--bad); border-color:var(--bad); color:#1a1b26; font-weight:700; }
+  #status { color:var(--muted); min-height:1.4em; margin-top:1rem; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>math ers</h1>
+
+  <div id="join" class="row">
+    <input id="name" placeholder="name" maxlength="24" />
+    <input id="code" placeholder="room code (blank = new)" maxlength="4" style="width:11ch" />
+    <button id="joinBtn">join</button>
+  </div>
+
+  <div id="game" class="hidden">
+    <div class="row"><strong>room <span id="roomCode"></span></strong>
+      <label>slap fairness
+        <select id="mode">
+          <option value="reflex">reflex (reaction time)</option>
+          <option value="ping">ping (first to server)</option>
+        </select></label>
+      <button id="deal">deal</button></div>
+    <ul id="players"></ul>
+    <div id="pile">
+      <div id="card">—</div>
+      <div id="pileCount" style="color:var(--muted)"></div>
+    </div>
+    <div class="row" style="justify-content:center">
+      <button id="flip" class="big">flip <span style="color:var(--muted)">(enter)</span></button>
+      <button id="slap" class="big">SLAP <span style="opacity:.7">(space)</span></button>
+    </div>
+    <div id="status"></div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const FACE = {1:"A",11:"J",12:"Q",13:"K"};
+let ws, mySeat = null;
+// Reaction timing: stamped when the new card actually paints (rAF after flip).
+let shownAt = null;
+function slap() {
+  const reaction = shownAt == null ? null : (performance.now() - shownAt) / 1000;
+  ws.send(JSON.stringify({ type: "slap", reaction }));
+}
+
+function show(card) {
+  $("#card").textContent = card == null ? "—" : (FACE[card] || card);
+}
+
+function render(room) {
+  $("#roomCode").textContent = room.code;
+  $("#players").innerHTML = "";
+  room.players.forEach((p, i) => {
+    const li = document.createElement("li");
+    li.classList.toggle("turn", room.started && i === room.turn);
+    li.innerHTML = `<span>${p.name}${i===mySeat?" (you)":""}</span><span>${p.cards} cards</span>`;
+    $("#players").appendChild(li);
+  });
+  show(room.pile_top);
+  $("#pileCount").textContent = room.started ? `pile: ${room.pile_count}` : "not dealt";
+  $("#flip").disabled = !room.started || room.turn !== mySeat;
+  $("#deal").disabled = room.started || room.players.length < 2;
+  $("#mode").value = room.mode;
+  $("#mode").disabled = room.started;  // locked once the game starts
+}
+
+function status(msg, cls) { $("#status").textContent = msg; $("#status").style.color =
+  cls === "good" ? "var(--good)" : cls === "bad" ? "var(--bad)" : "var(--muted)"; }
+
+$("#joinBtn").onclick = () => {
+  const name = $("#name").value.trim() || "anon";
+  const code = $("#code").value.trim().toUpperCase();
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ers/ws");
+  ws.onopen = () => ws.send(JSON.stringify({ type: "hello", name, code }));
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "joined") { mySeat = m.seat; $("#join").classList.add("hidden");
+      $("#game").classList.remove("hidden"); status("joined room " + m.code); }
+    else if (m.type === "state") render(m.room);
+    else if (m.type === "flip") {
+      // Stamp paint time of the new card; the state msg that paints it lands
+      // right after this, so the rAF fires on the frame showing the new card.
+      shownAt = null;
+      requestAnimationFrame(() => { shownAt = performance.now(); });
+    }
+    else if (m.type === "slap_won") { shownAt = null;
+      status(`${m.name} took the pile — ${m.rule}!`, m.seat === mySeat ? "good" : "bad"); }
+    else if (m.type === "burned") status("wrong slap — burned a card", "bad");
+    else if (m.type === "game_over") status(`game over — ${m.name} wins`, "good");
+    else if (m.type === "error") status(m.message, "bad");
+  };
+  ws.onclose = () => status("disconnected", "bad");
+};
+
+$("#mode").onchange = () => ws.send(JSON.stringify({ type: "set_mode", mode: $("#mode").value }));
+$("#deal").onclick = () => ws.send(JSON.stringify({ type: "deal" }));
+$("#flip").onclick = () => { if (!$("#flip").disabled) ws.send(JSON.stringify({ type: "flip" })); };
+$("#slap").onclick = () => slap();
+
+document.addEventListener("keydown", e => {
+  if ($("#game").classList.contains("hidden") || e.repeat) return;
+  if (e.code === "Space") { e.preventDefault(); slap(); }
+  else if (e.code === "Enter" && !$("#flip").disabled) ws.send(JSON.stringify({ type: "flip" }));
+});
+</script>
+</body>
+</html>

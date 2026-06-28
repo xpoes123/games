@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from src.bridge.app import app as bridge_app
 from src.chess import persistence as chess_persistence
 from src.chess.app import app as chess_app
+from src.ers.app import app as ers_app
 from src.config import settings
 
 # Wire chess game persistence at import time so the schema is ready before
@@ -61,6 +62,10 @@ LANDING_HTML = """<!doctype html>
         <div class="name">hearthstone chess</div>
         <div class="blurb">2-player chess + card game hybrid; king capture wins</div>
       </a></li>
+      <li><a href="/ers/">
+        <div class="name">math ers</div>
+        <div class="blurb">2–6 player slap game; latency-fair slap resolution</div>
+      </a></li>
     </ul>
   </main>
 </body>
@@ -84,9 +89,15 @@ async def chess_slash() -> RedirectResponse:
     return RedirectResponse("/chess/", status_code=307)
 
 
+@app.get("/ers")
+async def ers_slash() -> RedirectResponse:
+    return RedirectResponse("/ers/", status_code=307)
+
+
 # Each game is its own sub-app — isolated state, isolated WS endpoints.
 app.mount("/bridge", bridge_app)
 app.mount("/chess", chess_app)
+app.mount("/ers", ers_app)
 
 
 def main() -> None:
