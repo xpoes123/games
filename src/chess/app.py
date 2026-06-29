@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from src import auth, store
 from src.chess import persistence
 from src.chess.board import Piece
 from src.chess.cards import CARDS_BY_ID
@@ -406,6 +407,14 @@ def _persist_tick(room: Room) -> None:
             room.persistence_slug, room.winner, room.win_reason,
         )
         room.persistence_finalized = True
+        # Also record into the shared cross-game leaderboard (by guest/account).
+        white = room.player_by_seat("white")
+        black = room.player_by_seat("black")
+        for pl, opp in ((white, black), (black, white)):
+            if pl and pl.guest_id:
+                store.record_game("chess", pl.guest_id, pl.name,
+                                  won=(room.winner == pl.seat), mode="pvp",
+                                  opponent=opp.name if opp else None)
 
 
 @app.websocket("/ws")
@@ -422,6 +431,10 @@ async def chess_socket(ws: WebSocket) -> None:
     room = await registry.get_or_create(code)
     async with room.lock:
         player = room.add_player(name=name, ws=ws, client_id=client_id)
+        ident = auth.identity(ws.cookies)  # shared accounts/leaderboard identity
+        player.guest_id = ident["guest_id"]
+        if ident["discord_id"]:
+            store.link_guest(player.guest_id, ident["discord_id"])
     await _send(player, {"type": "welcome", "your_seat": player.seat, "player_id": player.pid})
     await _broadcast_state(room)
     # Re-deliver any pending prompt addressed to the rejoining player so

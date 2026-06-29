@@ -8,19 +8,37 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from src import auth, store
 from src.bridge.app import app as bridge_app
 from src.chess import persistence as chess_persistence
 from src.chess.app import app as chess_app
 from src.ers.app import app as ers_app
 from src.config import settings
 
-# Wire chess game persistence at import time so the schema is ready before
-# the first request lands. Empty path → no-op (tests, ephemeral dev).
+# Wire persistence at import time so schemas are ready before the first request.
+# Empty path → no-op / in-memory (tests, ephemeral dev).
 chess_persistence.configure(settings.chess_db_path or None)
+store.configure(settings.accounts_db_path or None)
 
 log = logging.getLogger("games")
 
 app = FastAPI(title="games.djiang.xyz", docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def guest_cookie(request, call_next):
+    """Issue a stable anonymous guest id so every visitor's games can be saved,
+    logged in or not. Applies across all mounted games."""
+    resp = await call_next(request)
+    if not request.cookies.get(auth.GUEST_COOKIE):
+        resp.set_cookie(
+            auth.GUEST_COOKIE, auth.new_guest_id(), max_age=5 * 365 * 24 * 3600,
+            httponly=True, samesite="lax", secure=settings.web_base_url.startswith("https"),
+        )
+    return resp
+
+
+app.include_router(auth.router)
 
 
 @app.get("/healthz")
@@ -48,10 +66,13 @@ LANDING_HTML = """<!doctype html>
     li a:hover { border-color: var(--accent); color: var(--accent); }
     li .name { font-weight: 600; }
     li .blurb { color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }
+    #auth { text-align: right; min-height: 1.4em; color: var(--muted); }
+    #auth a { color: var(--accent); }
   </style>
 </head>
 <body>
   <main>
+    <div id="auth"></div>
     <h1>games</h1>
     <ul>
       <li><a href="/bridge/">
@@ -68,6 +89,13 @@ LANDING_HTML = """<!doctype html>
       </a></li>
     </ul>
   </main>
+  <script>
+    fetch("/auth/me").then(r => r.json()).then(m => {
+      const el = document.getElementById("auth");
+      if (m.authenticated) el.innerHTML = m.user.username + ' · <a href="/auth/logout">logout</a>';
+      else if (m.oauth) el.innerHTML = '<a href="/auth/discord/login">login with Discord</a>';
+    }).catch(() => {});
+  </script>
 </body>
 </html>
 """

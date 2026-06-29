@@ -51,10 +51,18 @@
   #rules ul { list-style:none; padding:0; margin:.5rem 0 0; display:grid; gap:.4rem; }
   #rules li { color:var(--muted); }
   #rules li b { color:var(--fg); }
+  #auth a { color:var(--accent); }
+  #board { margin-top:1rem; border:1px solid var(--border); padding:.5rem .75rem; }
+  #board summary { cursor:pointer; color:var(--accent); }
+  #board ol { margin:.6rem 0 0; padding-left:1.5rem; }
+  #board li { margin:.25rem 0; }
+  #board li.you { color:var(--accent); }
+  #board .meta { color:var(--muted); }
 </style>
 </head>
 <body>
 <main>
+  <div id="auth" class="row" style="justify-content:flex-end; min-height:1.5em"></div>
   <h1>math ers</h1>
 
   <div id="join" class="row">
@@ -69,7 +77,17 @@
       <button id="deal">deal</button>
       <button id="mute"></button></div>
 
-    <details id="settings" open>
+    <div id="topOpp" class="row hidden" style="margin-top:.5rem">
+      <label>opponent
+        <select id="cpu">
+          <option value="zen">zen (no CPU)</option>
+          <option value="easy">easy</option>
+          <option value="medium">medium</option>
+          <option value="hard">hard</option>
+          <option value="insane">insane</option>
+        </select></label></div>
+
+    <details id="settings">
       <summary>settings</summary>
       <label>slap fairness
         <select id="mode">
@@ -83,14 +101,6 @@
           <option value="2">2s</option>
           <option value="3">3s</option>
           <option value="5">5s</option>
-        </select></label>
-      <label id="cpuRow" class="hidden">opponent
-        <select id="cpu">
-          <option value="zen">zen (no CPU)</option>
-          <option value="easy">easy</option>
-          <option value="medium">medium</option>
-          <option value="hard">hard</option>
-          <option value="insane">insane</option>
         </select></label>
       <label>face-card battle <input type="checkbox" id="battle"></label>
       <div id="ruleToggles"></div>
@@ -108,6 +118,8 @@
       <button id="slap" class="big">SLAP <span style="opacity:.7">(space)</span></button>
     </div>
     <div id="status"></div>
+    <div class="row" style="justify-content:center; margin-top:.5rem">
+      <button id="replay" class="big hidden">play again</button></div>
     <div id="score" class="hidden" style="color:var(--muted); margin-top:.5rem"></div>
 
     <details id="rules">
@@ -122,6 +134,12 @@
         <li><b>geometric</b> — top 3 are a geometric sequence. 2,4,8</li>
         <li><b>fibonacci (mod 12)</b> — each card is the previous two summed (wrapping at 12); run length set in settings. 2,3,5</li>
       </ul>
+    </details>
+
+    <div id="pb" style="color:var(--muted); margin-top:1rem"></div>
+    <details id="board">
+      <summary>leaderboard</summary>
+      <ol id="boardList"></ol>
     </details>
   </div>
 </main>
@@ -199,7 +217,7 @@ function render(room) {
   $("#mode").disabled = room.started && !solo;
   $("#clock").value = String(room.shot_clock || 0);
   $("#clock").disabled = room.started && !solo;
-  $("#cpuRow").classList.toggle("hidden", !room.solo);  // shown in solo even at zen
+  $("#topOpp").classList.toggle("hidden", !room.solo);  // opponent picker, top, solo only
   $("#cpu").value = room.cpu ? room.cpu_level : "zen";
   $("#battle").checked = !!room.battle_enabled;
   $("#battle").disabled = room.started && !solo;
@@ -234,6 +252,37 @@ function sendSpans() {
 function status(msg, cls) { $("#status").textContent = msg; $("#status").style.color =
   cls === "good" ? "var(--good)" : cls === "bad" ? "var(--bad)" : "var(--muted)"; }
 
+async function fetchAuth() {
+  try {
+    const m = await (await fetch("/auth/me")).json();
+    const el = $("#auth");
+    if (m.authenticated) el.innerHTML = `${m.user.username} · <a href="/auth/logout">logout</a>`;
+    else if (m.oauth) el.innerHTML = `<a href="/auth/discord/login">login with Discord</a> to save PBs`;
+    else el.textContent = "playing as guest";
+  } catch {}
+}
+async function fetchBoards() {
+  try {
+    const lb = (await (await fetch("/api/leaderboard?game=ers")).json()).leaderboard || [];
+    const ol = $("#boardList"); ol.innerHTML = "";
+    lb.forEach(e => {
+      const li = document.createElement("li");
+      const bits = [`${e.wins}W`];
+      if (e.hardest) bits.push(`beat ${e.hardest}`);
+      li.innerHTML = `${e.name}${e.is_account ? "" : " (guest)"} <span class="meta">— ${bits.join(" · ")}</span>`;
+      ol.appendChild(li);
+    });
+    if (!lb.length) ol.innerHTML = '<li class="meta">no games yet</li>';
+    const prof = (await (await fetch("/api/profile?game=ers")).json()).profile;
+    if (prof && prof.games) {
+      const p = [`${prof.wins}/${prof.games} wins`];
+      if (prof.hardest) p.push(`hardest beaten: ${prof.hardest}`);
+      if (prof.fastest_win) p.push(`fastest: ${prof.fastest_win.toFixed(1)}s`);
+      $("#pb").textContent = "your record — " + p.join(" · ");
+    } else $("#pb").textContent = "";
+  } catch {}
+}
+
 function connect(hello) {
   initAudio();  // join click is a user gesture → WebAudio is allowed to start
   ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ers/ws");
@@ -249,9 +298,11 @@ function connect(hello) {
         status("vs CPU — flip on your turn, slap a pattern before it does");
         ws.send(JSON.stringify({ type: "deal" }));
       } else status("joined room " + m.code);
+      fetchBoards();
     }
     else if (m.type === "state") render(m.room);
     else if (m.type === "flip") {
+      $("#replay").classList.add("hidden");
       play("flip");
       // Color the card by who played it — makes each play obvious (alternates)
       // and shows whose card is on top.
@@ -281,8 +332,12 @@ function connect(hello) {
     else if (m.type === "missed") { sc.miss++; drawScore();
       status(`missed — that was ${m.rule}`, "bad"); }
     else if (m.type === "burned") { sc.wrong++; drawScore(); play("burn");
-      status("wrong slap — burned a card", "bad"); }
-    else if (m.type === "game_over") { play("over"); status(`game over — ${m.name} wins`, "good"); }
+      const n = m.count || 1;
+      status(`wrong slap — burned ${n} card${n === 1 ? "" : "s"}`, "bad"); }
+    else if (m.type === "game_over") { play("over");
+      status(`game over — ${m.name} wins`, "good");
+      $("#replay").classList.remove("hidden");
+      fetchBoards(); fetchAuth(); }
     else if (m.type === "error") status(m.message, "bad");
   };
   ws.onclose = () => status("disconnected", "bad");
@@ -297,6 +352,8 @@ $("#clock").onchange = () => ws.send(JSON.stringify({ type: "set_clock", seconds
 $("#cpu").onchange = () => ws.send(JSON.stringify({ type: "set_cpu", level: $("#cpu").value }));
 $("#battle").onchange = () => ws.send(JSON.stringify({ type: "set_battle", on: $("#battle").checked }));
 $("#mute").onclick = () => { muted = !muted; localStorage.setItem("ers_mute", muted ? "1" : "0"); drawMute(); if (!muted) initAudio(); };
+$("#replay").onclick = () => { $("#replay").classList.add("hidden"); ws.send(JSON.stringify({ type: "deal" })); };
+fetchAuth();
 drawMute();
 $("#deal").onclick = () => ws.send(JSON.stringify({ type: "deal" }));
 $("#flip").onclick = () => { if (!$("#flip").disabled) ws.send(JSON.stringify({ type: "flip" })); };

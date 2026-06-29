@@ -33,21 +33,29 @@ def value(rank: int) -> int:
 SLAP_WINDOW_S = 0.20
 
 # Flip shot clock: you must play a card within this long on your turn, or the
-# server auto-flips for you. Stops players tanking to scan the pile. Off in solo.
-SHOT_CLOCK_S = 2.0
+# server auto-flips for you. Stops players tanking to scan the pile.
+SHOT_CLOCK_S = 3.0
 
 # A wrong slap landing within this long of your previous slap is forgiven (no
 # burn) — stops an accidental double-tap right after a real slap from costing you.
 SLAP_DEBOUNCE_S = 0.4
 
-# CPU difficulty: reaction = slap/flip delay (s); coverage = how many of the 5
-# patterns it checks per pile (random subset — misses the rest); max_digits =
-# largest square/cube concatenation it can spot. insane ≈ perfect.
+# CPU difficulty modelled like a human scanning the pile:
+#   base       — reaction latency once it spots the pattern (s)
+#   per_cat    — extra time per category it has to hunt through (random order)
+#   per_card   — extra time per card it has to scan
+#   primed     — categories it keeps "in its head" and catches instantly
+#   coverage   — how many of the 5 categories it checks at all (misses the rest)
+#   max_digits — largest square/cube concatenation it can read
+# A pattern it primed → ~base; one it must hunt → base + position*per_cat +
+# cards*per_card; one outside its coverage/skill → missed. insane primes all.
 CPU_LEVELS = {
-    "easy":   {"reaction": 1.4,  "coverage": 2, "max_digits": 2},
-    "medium": {"reaction": 0.8,  "coverage": 3, "max_digits": 3},
-    "hard":   {"reaction": 0.5,  "coverage": 4, "max_digits": 4},
-    "insane": {"reaction": 0.28, "coverage": 5, "max_digits": 99},
+    "easy":   {"base": 0.65, "per_cat": 0.55, "per_card": 0.16, "primed": 1, "coverage": 2, "max_digits": 2},
+    "medium": {"base": 0.52, "per_cat": 0.33, "per_card": 0.11, "primed": 1, "coverage": 3, "max_digits": 3},
+    "hard":   {"base": 0.45, "per_cat": 0.22, "per_card": 0.08, "primed": 2, "coverage": 4, "max_digits": 4},
+    # insane is fast but still HUMAN (~0.4s base, primes 3 of 5, scans the rest)
+    # — it can lose the flip-race and miss, so a great player can beat it.
+    "insane": {"base": 0.40, "per_cat": 0.12, "per_card": 0.04, "primed": 3, "coverage": 5, "max_digits": 99},
 }
 
 # Face-card battle (classic ERS, optional): playing a face card forces the next
@@ -155,6 +163,9 @@ class Player:
     connected: bool = True
     is_cpu: bool = False
     last_slap: float = 0.0  # monotonic time of this player's last slap (debounce)
+    wrong_streak: int = 0   # consecutive wrong slaps → escalating burn (1,2,3,...)
+    guest_id: str = ""      # cookie identity (for saving games / leaderboards)
+    discord_id: str = ""    # set when logged in
 
 
 @dataclass
@@ -164,11 +175,9 @@ class Room:
     pile: list[int] = field(default_factory=list)
     turn: int = 0
     started: bool = False
+    started_at: float = 0.0  # wall-clock game start (for game duration)
     solo: bool = False  # practice room: 1 human vs a CPU, re-deal freely
     cpu_level: str = "medium"   # difficulty preset (see CPU_LEVELS)
-    cpu_reaction: float = 0.8   # slap/flip delay, derived from cpu_level
-    cpu_coverage: int = 3       # patterns the CPU checks per pile
-    cpu_max_digits: int = 3     # largest square/cube the CPU can spot
     battle_enabled: bool = False        # face-card battle rule (off by default)
     battle_owner: int | None = None     # seat owed the pile if a challenge fails
     battle_chances: int = 0             # responder's flips left (0 = no battle)
@@ -205,6 +214,7 @@ class Room:
         random.shuffle(deck)
         for p in self.players:
             p.stack = []
+            p.wrong_streak = 0
         for i, card in enumerate(deck):
             self.players[i % len(self.players)].stack.append(card)
         self.pile = []
@@ -291,10 +301,13 @@ class Room:
         if not is_slappable(self.pile, self.rule_spans):
             if recent:
                 return "ignore"  # debounce: accidental double-tap right after a slap
-            # Penalty: burn one card to the bottom of the pile, lock out.
+            # Escalating penalty: 1st wrong burns 1, next 2, next 3, ... so
+            # spamming slaps tears through your stack. Resets on a correct slap.
+            player.wrong_streak += 1
+            for _ in range(player.wrong_streak):
+                if player.stack:
+                    self.pile.insert(0, player.stack.pop())
             self.locked_out.add(player)
-            if player.stack:
-                self.pile.insert(0, player.stack.pop())
             return "wrong"
         if self.mode == "reflex":
             if reaction is None or reaction < MIN_HUMAN_S:
@@ -304,6 +317,7 @@ class Room:
             key = arrival
         if player in self.slaps:
             return "ignore"
+        player.wrong_streak = 0  # a correct slap clears the escalating penalty
         self.slaps[player] = key
         if not self.window_open:
             self.window_open = True
@@ -327,16 +341,37 @@ class Room:
         self._reset_slaps()
         return winner
 
-    def cpu_sees(self, pile: list[int]) -> bool:
-        """Whether the CPU spots a slappable pattern: it only checks a random
-        subset (cpu_coverage) of the enabled rules each pile, and can't read
-        squares/cubes bigger than cpu_max_digits — so a weaker CPU misses."""
+    def cpu_cfg(self) -> dict:
+        return CPU_LEVELS.get(self.cpu_level, CPU_LEVELS["medium"])
+
+    def cpu_plan(self, pile: list[int]) -> float | None:
+        """Seconds for the CPU to slap this pile, or None if it misses. Scans the
+        enabled categories in random order: a primed one is caught at ~base, one
+        it must hunt costs more per category passed + per card, and anything
+        beyond its coverage or digit ceiling is missed."""
+        cfg = self.cpu_cfg()
         enabled = [r for r in ALL_RULES if self.rule_spans.get(r, 0) >= min_span(r)]
         if not enabled:
-            return False
-        subset = random.sample(enabled, min(self.cpu_coverage, len(enabled)))
-        sub_spans = {r: self.rule_spans[r] for r in subset}
-        return is_slappable(pile, sub_spans, max_digits=self.cpu_max_digits)
+            return None
+        order = random.sample(enabled, len(enabled))  # random scan order
+        cards = min(len(pile), MAX_SPAN)
+        for i, cat in enumerate(order[:cfg["coverage"]]):
+            if is_slappable(pile, {cat: self.rule_spans[cat]}, max_digits=cfg["max_digits"]):
+                if i < cfg["primed"]:
+                    t = cfg["base"]  # primed in its head → instant
+                else:
+                    t = cfg["base"] + (i - cfg["primed"] + 1) * cfg["per_cat"] + cards * cfg["per_card"]
+                return t * random.uniform(0.85, 1.15)
+        return None
+
+    def cpu_flip_delay(self) -> float:
+        """How long until the CPU plays its card — deliberately varied so it
+        sometimes flips before it finishes scanning (and misses a slap it could
+        have made). Overlaps the scan-time range."""
+        cfg = self.cpu_cfg()
+        lo = cfg["base"] * 0.8
+        hi = cfg["base"] + cfg["coverage"] * cfg["per_cat"] + 3 * cfg["per_card"]
+        return random.uniform(lo, hi)
 
     def winner(self) -> Player | None:
         """Whole-deck winner, or None if the game is still going."""
@@ -357,7 +392,7 @@ class Room:
             "shot_clock": self.shot_clock,
             "solo": self.solo,
             "cpu": any(p.is_cpu for p in self.players),
-            "cpu_level": self.cpu_level,
+            "cpu_level": self.cpu_level if any(p.is_cpu for p in self.players) else "zen",
             "battle_enabled": self.battle_enabled,
             "battle": (
                 {"responder": self.turn, "owner": self.battle_owner, "chances": self.battle_chances}
@@ -441,6 +476,19 @@ def demo() -> None:
     assert r2.record_slap(r2.players[0], reaction=0.30, arrival=1.1) == "ignore"
     assert r2.players[0].stack == [5]  # no extra card burned
 
+    # Escalating wrong-slap penalty: 1, then 2, then ... across piles.
+    re3 = Room(code="WS")
+    re3.players = [Player("a", None, stack=[1, 2, 3, 4, 5, 6])]
+    re3.pile = [2, 3]                                   # not slappable
+    assert re3.record_slap(re3.players[0], 0.3, 1.0) == "wrong"   # burn 1
+    assert re3.players[0].wrong_streak == 1 and len(re3.players[0].stack) == 5
+    re3._reset_slaps(); re3.pile = [2, 3]              # new pile (clears lock-out)
+    assert re3.record_slap(re3.players[0], 0.3, 5.0) == "wrong"   # burn 2
+    assert re3.players[0].wrong_streak == 2 and len(re3.players[0].stack) == 3
+    re3._reset_slaps(); re3.pile = [1, 6]             # slappable → resets streak
+    assert re3.record_slap(re3.players[0], 0.3, 9.0) == "open"
+    assert re3.players[0].wrong_streak == 0
+
     # Face-card battle: Jack(rank 11)=1 chance; unanswered → owner takes pile.
     rb = Room(code="B", battle_enabled=True, started=True)
     rb.players = [Player("a", None, stack=[11]), Player("b", None, stack=[5])]
@@ -468,12 +516,13 @@ def demo() -> None:
     rw.players = [Player("a", None, stack=[2, 3]), Player("b", None, stack=[])]
     assert rw.winner() is rw.players[0]
 
-    # CPU perception: insane sees all; easy can't read a 3-digit-only square.
-    ri = Room(code="I", cpu_coverage=5, cpu_max_digits=99)
-    assert ri.cpu_sees([1, 6])                 # "16" = 4², insane sees everything
-    re_ = Room(code="E", cpu_coverage=2, cpu_max_digits=2)
+    # CPU perception: insane always spots a slappable pile (and fast); easy
+    # can't read a 3-digit-only square no matter the scan order.
+    ri = Room(code="I", cpu_level="insane")
+    assert ri.cpu_plan([1, 6]) is not None and ri.cpu_plan([1, 6]) < 1.0
+    re_ = Room(code="E", cpu_level="easy")
     assert is_slappable([1, 2, 1])             # "121" = 11² really is slappable
-    assert not re_.cpu_sees([1, 2, 1])         # ...but 3 digits → invisible to easy
+    assert re_.cpu_plan([1, 2, 1]) is None     # ...but 3 digits → invisible to easy
     print("ok")
 
 

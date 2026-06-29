@@ -18,6 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from src import auth, store
 from src.ers.rooms import (
     ALL_RULES, CPU_LEVELS, MAX_SPAN, ROOMS, SLAP_WINDOW_S, Player, Room,
     make_room, min_span, slap_rule,
@@ -54,6 +55,21 @@ async def _broadcast_state(room: Room) -> None:
     await _broadcast(room, {"type": "state", "room": room.public_state()})
 
 
+def _record_result(room: Room, winner: Player) -> None:
+    """Save the finished game for each human player (guests included)."""
+    cpu = any(p.is_cpu for p in room.players)
+    dur = (time.time() - room.started_at) if room.started_at else None
+    for p in room.players:
+        if p.is_cpu or not p.guest_id:
+            continue
+        if cpu:
+            mode, opp = "cpu", room.cpu_level
+        else:
+            others = [q.name for q in room.players if q is not p]
+            mode, opp = "pvp", (others[0] if others else None)
+        store.record_game("ers", p.guest_id, p.name, p is winner, mode, opp, dur)
+
+
 async def _open_slap_window(room: Room) -> None:
     await asyncio.sleep(SLAP_WINDOW_S)
     async with room.lock:
@@ -69,6 +85,7 @@ async def _open_slap_window(room: Room) -> None:
     if end is not None:
         async with room.lock:
             room.started = False  # game over → stop the shot clock and further flips
+        _record_result(room, end)
         await _broadcast(room, {"type": "game_over", "name": end.name})
     await _broadcast_state(room)
     await _arm_clock(room)
@@ -123,6 +140,7 @@ async def _flip_for(room: Room, p: Player) -> tuple[bool, str | None]:
     if end is not None:
         async with room.lock:
             room.started = False  # stop the shot clock and further flips
+        _record_result(room, end)
         await _broadcast(room, {"type": "game_over", "name": end.name})
     await _broadcast_state(room)
     await _arm_clock(room)  # turn advanced → restart clock for next player
@@ -138,10 +156,10 @@ async def _handle_flip(room: Room, p: Player) -> None:
 
 # --- CPU opponent (solo practice) ----------------------------------------
 def _cpu_after_change(room: Room) -> None:
-    """React to a state change: the CPU slaps a live pile, else flips on its
-    turn. Both happen after the SAME cpu_reaction delay so the CPU's timing
-    never reveals whether the pile is slappable (no tell). Synchronous — only
-    (re)schedules timers, no awaits. Called after every deal/flip/slap."""
+    """React to a state change: the CPU races its human-like scan (cpu_plan)
+    against when it'll flip — slaps if it computes a pattern in time, else flips
+    (and misses it). Synchronous — only (re)schedules timers, no awaits. Called
+    after every deal/flip/slap."""
     cpu = next((p for p in room.players if p.is_cpu), None)
     for attr in ("cpu_flip_task", "cpu_slap_task"):
         t = getattr(room, attr)
@@ -150,39 +168,46 @@ def _cpu_after_change(room: Room) -> None:
             setattr(room, attr, None)
     if not cpu or not room.started:
         return
-    if room.cpu_sees(room.pile):  # only patterns within its skill — else it misses
-        room.cpu_slap_task = asyncio.create_task(_cpu_slap(room, cpu))
-    elif room.turn == room.seat_of(cpu) and cpu.stack:
-        room.cpu_flip_task = asyncio.create_task(_cpu_flip(room, cpu))
+    delay = room.cpu_plan(room.pile)  # human-like scan time, or None if it can't see it
+    my_turn = room.turn == room.seat_of(cpu) and bool(cpu.stack)
+    if my_turn:
+        # Race its scan against when it'll play its card: if it doesn't finish
+        # computing before it flips, it just flips (and misses the slap).
+        flip_at = room.cpu_flip_delay()
+        if delay is not None and delay < flip_at:
+            room.cpu_slap_task = asyncio.create_task(_cpu_slap(room, cpu, delay))
+        else:
+            room.cpu_flip_task = asyncio.create_task(_cpu_flip(room, cpu, flip_at))
+    elif delay is not None:
+        # Opponent's turn: slap if/when it spots the pattern (before the pile moves on).
+        room.cpu_slap_task = asyncio.create_task(_cpu_slap(room, cpu, delay))
 
 
-def _cpu_delay(room: Room) -> float:
-    return room.cpu_reaction * random.uniform(0.85, 1.15)  # jitter → not robotic
-
-
-async def _cpu_flip(room: Room, cpu: Player) -> None:
+async def _cpu_flip(room: Room, cpu: Player, delay: float) -> None:
     try:
-        await asyncio.sleep(_cpu_delay(room))  # same distribution as a slap — no tell
+        await asyncio.sleep(delay)
     except asyncio.CancelledError:
         return
     room.cpu_flip_task = None
     await _flip_for(room, cpu)
 
 
-async def _cpu_slap(room: Room, cpu: Player) -> None:
+async def _cpu_slap(room: Room, cpu: Player, delay: float) -> None:
     try:
-        await asyncio.sleep(_cpu_delay(room))  # difficulty = how fast it reacts
+        await asyncio.sleep(delay)
     except asyncio.CancelledError:
         return
     room.cpu_slap_task = None
-    await _process_slap(room, cpu, room.cpu_reaction, time.monotonic())
+    # Its scan time is its "reaction" — competes with the human's in reflex mode.
+    await _process_slap(room, cpu, delay, time.monotonic())
 
 
 async def _process_slap(room: Room, p: Player, reaction: float | None, arrival: float) -> None:
     async with room.lock:
         result = room.record_slap(p, reaction, arrival)
+        burned = p.wrong_streak
     if result == "wrong":
-        await _send(p, {"type": "burned"})  # no-op for CPU
+        await _send(p, {"type": "burned", "count": burned})  # no-op for CPU
         await _broadcast_state(room)
     elif result == "open":
         asyncio.create_task(_open_slap_window(room))
@@ -208,8 +233,7 @@ async def ws(sock: WebSocket) -> None:
 
     if solo:
         room = make_room()
-        room.solo = True
-        room.shot_clock = 0.0  # off by default in solo; player can enable for drilling
+        room.solo = True  # shot clock defaults on (3s); switch to zen + off to study
     elif code and code in ROOMS:
         room = ROOMS[code]
     else:
@@ -219,6 +243,13 @@ async def ws(sock: WebSocket) -> None:
         return
 
     p = room.add(name, sock)
+    # Identity from cookies: guest id always, discord id if logged in. Logging in
+    # links this guest's saved games (past + future) to the account.
+    ident = auth.identity(sock.cookies)
+    p.guest_id = ident["guest_id"]
+    if ident["discord_id"]:
+        p.discord_id = ident["discord_id"]
+        store.link_guest(p.guest_id, p.discord_id)
     if room.solo and not any(pl.is_cpu for pl in room.players):
         cpu = room.add("CPU", None)  # seat 1: the opponent
         cpu.is_cpu = True
@@ -260,11 +291,7 @@ async def ws(sock: WebSocket) -> None:
                     had = any(pl.is_cpu for pl in room.players)
                     want = level in CPU_LEVELS  # "zen"/unknown → no opponent
                     if want:
-                        cfg = CPU_LEVELS[level]
-                        room.cpu_level = level
-                        room.cpu_reaction = cfg["reaction"]
-                        room.cpu_coverage = cfg["coverage"]
-                        room.cpu_max_digits = cfg["max_digits"]
+                        room.cpu_level = level  # cfg derived from level in cpu_plan()
                     if want != had:  # CPU added/removed → rebuild and re-deal
                         if want:
                             room.add("CPU", None).is_cpu = True
@@ -287,6 +314,7 @@ async def ws(sock: WebSocket) -> None:
                     need = 1 if room.solo else 2
                     if len(room.players) >= need and (room.solo or not room.started):
                         room.deal()
+                        room.started_at = time.time()
                 await _broadcast(room, {"type": "dealt"})
                 await _broadcast_state(room)
                 await _arm_clock(room)

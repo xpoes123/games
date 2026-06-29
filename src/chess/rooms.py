@@ -78,6 +78,7 @@ class Player:
     # layer can group games by player across rooms. May be None for clients
     # that don't send one (older builds, scripts).
     client_id: str | None = None
+    guest_id: str = ""  # cookie identity for shared accounts/leaderboards
     hand: list[Card] = field(default_factory=list)
     deck: list[Card] = field(default_factory=list)
     gold: int = 0
