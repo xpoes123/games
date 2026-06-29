@@ -17,7 +17,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.ers.rooms import ROOMS, SLAP_WINDOW_S, Player, Room, make_room, slap_rule
+from src.ers.rooms import ROOMS, SHOT_CLOCK_S, SLAP_WINDOW_S, Player, Room, make_room, slap_rule
 
 log = logging.getLogger("ers")
 
@@ -61,22 +61,63 @@ async def _open_slap_window(room: Room) -> None:
         "type": "slap_won", "seat": seat, "name": winner.name, "rule": rule,
     })
     if end is not None:
+        async with room.lock:
+            room.started = False  # game over → stop the shot clock and further flips
         await _broadcast(room, {"type": "game_over", "name": end.name})
     await _broadcast_state(room)
+    await _arm_clock(room)
 
 
-async def _handle_flip(room: Room, p: Player) -> None:
+async def _arm_clock(room: Room) -> None:
+    """(Re)start the shot clock for whoever's turn it is. Server-authoritative;
+    the broadcast is only a hint for the client's countdown bar."""
+    if room.clock_task:
+        room.clock_task.cancel()
+        room.clock_task = None
+    if not room.started or room.solo:
+        return
+    if room.turn >= len(room.players) or not room.players[room.turn].stack:
+        return
+    room.clock_task = asyncio.create_task(_clock(room))
+    await _broadcast(room, {"type": "clock", "seat": room.turn, "seconds": SHOT_CLOCK_S})
+
+
+async def _clock(room: Room) -> None:
+    try:
+        await asyncio.sleep(SHOT_CLOCK_S)
+    except asyncio.CancelledError:
+        return
+    room.clock_task = None  # detach self so the re-arm below doesn't cancel us
+    async with room.lock:
+        cur = None
+        if room.started and not room.solo and not room.window_open:
+            if room.turn < len(room.players) and room.players[room.turn].stack:
+                cur = room.players[room.turn]
+    if cur and (await _flip_for(room, cur))[0]:
+        return  # auto-flip succeeded; _flip_for re-armed the clock
+    await _arm_clock(room)  # couldn't flip (slap window / race) — try again
+
+
+async def _flip_for(room: Room, p: Player) -> tuple[bool, str | None]:
     async with room.lock:
         # Solo practice: flipping past a live (unslapped) pile is a miss.
         missed = slap_rule(room.pile) if room.solo and not room.window_open else None
+        seat = room.seat_of(p)
         card, err = room.flip(p)
     if err:
-        await _send(p, {"type": "error", "message": err})
-        return
+        return False, err
     if missed:
         await _send(p, {"type": "missed", "rule": missed})
-    await _broadcast(room, {"type": "flip", "seat": room.seat_of(p), "card": card})
+    await _broadcast(room, {"type": "flip", "seat": seat, "card": card})
     await _broadcast_state(room)
+    await _arm_clock(room)  # turn advanced → restart clock for next player
+    return True, None
+
+
+async def _handle_flip(room: Room, p: Player) -> None:
+    ok, err = await _flip_for(room, p)
+    if not ok and err:
+        await _send(p, {"type": "error", "message": err})
 
 
 async def _handle_slap(room: Room, p: Player, msg: dict) -> None:
@@ -135,6 +176,7 @@ async def ws(sock: WebSocket) -> None:
                         room.deal()
                 await _broadcast(room, {"type": "dealt"})
                 await _broadcast_state(room)
+                await _arm_clock(room)
             elif action == "flip":
                 await _handle_flip(room, p)
             elif action == "slap":
@@ -146,6 +188,9 @@ async def ws(sock: WebSocket) -> None:
         if p in room.players:
             room.players.remove(p)
         if not room.players:
+            if room.clock_task:
+                room.clock_task.cancel()
             ROOMS.pop(room.code, None)
         else:
             await _broadcast_state(room)
+            await _arm_clock(room)  # seats shifted; restart clock for current turn

@@ -33,6 +33,10 @@ def value(rank: int) -> int:
 # a slower-pinged player's slap still lands inside the window to be ranked.
 SLAP_WINDOW_S = 0.20
 
+# Flip shot clock: you must play a card within this long on your turn, or the
+# server auto-flips for you. Stops players tanking to scan the pile. Off in solo.
+SHOT_CLOCK_S = 2.0
+
 # Floor on a believable human reaction. Anything faster is an anticipatory mash
 # or a tampered client — ignored (no win, no penalty). ponytail: this is the
 # only anti-cheat; client reaction times are otherwise trusted, fine for
@@ -126,6 +130,7 @@ class Room:
     locked_out: set = field(default_factory=set)  # wrong-slapped this pile
     window_open: bool = False
     pending_rule: str | None = None  # which rule the live slap window is on
+    clock_task: object = field(default=None, repr=False, compare=False)  # shot-clock timer
 
     # --- setup ---------------------------------------------------------
     def add(self, name: str, socket) -> Player:

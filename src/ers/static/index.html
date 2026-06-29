@@ -35,6 +35,8 @@
   #slap { background:var(--bad); border-color:var(--bad); color:#1a1b26; font-weight:700; }
   #status { color:var(--muted); min-height:1.4em; margin-top:1rem; }
   .hidden { display:none; }
+  #clockwrap { height:3px; max-width:300px; margin:0 auto 1.25rem; background:var(--border); }
+  #clockbar { height:100%; width:0; background:var(--accent); }
   #rules { margin-top:1.5rem; border:1px solid var(--border); padding:.5rem .75rem; }
   #rules summary { cursor:pointer; color:var(--accent); }
   #rules p { color:var(--muted); margin:.6rem 0; }
@@ -68,6 +70,7 @@
       <div id="card">—</div>
       <div id="pileCount" style="color:var(--muted)"></div>
     </div>
+    <div id="clockwrap" class="hidden"><div id="clockbar"></div></div>
     <div class="row" style="justify-content:center">
       <button id="flip" class="big">flip <span style="color:var(--muted)">(enter)</span></button>
       <button id="slap" class="big">SLAP <span style="opacity:.7">(space)</span></button>
@@ -121,6 +124,7 @@ function render(room) {
   });
   show(room.pile_top);
   $("#pileCount").textContent = room.started ? `pile: ${room.pile_count}` : "not dealt";
+  $("#clockwrap").classList.toggle("hidden", !room.started || solo);
   $("#flip").disabled = !room.started || room.turn !== mySeat;
   // Solo: deal acts as "shuffle" and is always available; multiplayer needs 2.
   $("#deal").disabled = solo ? false : (room.started || room.players.length < 2);
@@ -156,6 +160,14 @@ function connect(hello) {
     else if (m.type === "slap_won") { shownAt = null;
       if (m.seat === mySeat) { sc.hit++; drawScore(); }
       status(`${m.name} took the pile — ${m.rule}!`, m.seat === mySeat ? "good" : "bad"); }
+    else if (m.type === "clock") {
+      // Cosmetic only — the SERVER auto-flips; this bar never gates input.
+      // Empty ~150ms early so it's never optimistic relative to the real deadline.
+      const bar = $("#clockbar"), dur = Math.max(0.1, m.seconds - 0.15);
+      bar.style.transition = "none"; bar.style.width = "100%";
+      requestAnimationFrame(() => {
+        bar.style.transition = `width ${dur}s linear`; bar.style.width = "0%"; });
+    }
     else if (m.type === "missed") { sc.miss++; drawScore();
       status(`missed — that was ${m.rule}`, "bad"); }
     else if (m.type === "burned") { sc.wrong++; drawScore();
