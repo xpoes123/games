@@ -139,6 +139,7 @@ class Room:
     solo: bool = False  # practice room: 1 player, no win condition, re-deal freely
     # Per-rule difficulty: min cards each pattern must span (0 = off). See settings.
     rule_spans: dict = field(default_factory=lambda: dict(DEFAULT_SPANS))
+    shot_clock: float = SHOT_CLOCK_S  # seconds to flip before auto-flip; 0 = off
     # "reflex": rank slaps by client reaction time (ping-independent, trusts
     # client). "ping": rank by server arrival (first packet wins, no trust).
     mode: str = "reflex"
@@ -265,6 +266,7 @@ class Room:
             "all_rules": list(ALL_RULES),
             "spans": {r: self.rule_spans.get(r, 0) for r in ALL_RULES},
             "max_span": MAX_SPAN,
+            "shot_clock": self.shot_clock,
             "turn": self.turn,
             "pile_count": len(self.pile),
             "pile_top": self.pile[-1] if self.pile else None,

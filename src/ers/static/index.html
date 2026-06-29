@@ -74,6 +74,14 @@
           <option value="reflex">reflex (reaction time)</option>
           <option value="ping">ping (first to server)</option>
         </select></label>
+      <label>shot clock
+        <select id="clock">
+          <option value="0">off</option>
+          <option value="1">1s</option>
+          <option value="2">2s</option>
+          <option value="3">3s</option>
+          <option value="5">5s</option>
+        </select></label>
       <div id="ruleToggles"></div>
     </details>
 
@@ -136,12 +144,14 @@ function render(room) {
   });
   show(room.pile_top);
   $("#pileCount").textContent = room.started ? `pile: ${room.pile_count}` : "not dealt";
-  $("#clockwrap").classList.toggle("hidden", !room.started || solo);
+  $("#clockwrap").classList.toggle("hidden", !room.started || !room.shot_clock);
   $("#flip").disabled = !room.started || room.turn !== mySeat;
   // Solo: deal acts as "shuffle" and is always available; multiplayer needs 2.
   $("#deal").disabled = solo ? false : (room.started || room.players.length < 2);
   $("#mode").value = room.mode;
-  $("#mode").disabled = room.started;  // locked once the game starts
+  $("#mode").disabled = room.started && !solo;
+  $("#clock").value = String(room.shot_clock || 0);
+  $("#clock").disabled = room.started && !solo;
   renderRules(room);
 }
 
@@ -221,6 +231,7 @@ $("#joinBtn").onclick = () => connect({
 $("#soloBtn").onclick = () => connect({ name: $("#name").value.trim() || "anon", solo: true });
 
 $("#mode").onchange = () => ws.send(JSON.stringify({ type: "set_mode", mode: $("#mode").value }));
+$("#clock").onchange = () => ws.send(JSON.stringify({ type: "set_clock", seconds: +$("#clock").value }));
 $("#deal").onclick = () => ws.send(JSON.stringify({ type: "deal" }));
 $("#flip").onclick = () => { if (!$("#flip").disabled) ws.send(JSON.stringify({ type: "flip" })); };
 $("#slap").onclick = () => slap();

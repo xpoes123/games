@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.ers.rooms import (
-    ALL_RULES, MAX_SPAN, ROOMS, SHOT_CLOCK_S, SLAP_WINDOW_S, Player, Room,
+    ALL_RULES, MAX_SPAN, ROOMS, SLAP_WINDOW_S, Player, Room,
     make_room, min_span, slap_rule,
 )
 
@@ -77,23 +77,23 @@ async def _arm_clock(room: Room) -> None:
     if room.clock_task:
         room.clock_task.cancel()
         room.clock_task = None
-    if not room.started or room.solo:
+    if not room.started or room.shot_clock <= 0:
         return
     if room.turn >= len(room.players) or not room.players[room.turn].stack:
         return
     room.clock_task = asyncio.create_task(_clock(room))
-    await _broadcast(room, {"type": "clock", "seat": room.turn, "seconds": SHOT_CLOCK_S})
+    await _broadcast(room, {"type": "clock", "seat": room.turn, "seconds": room.shot_clock})
 
 
 async def _clock(room: Room) -> None:
     try:
-        await asyncio.sleep(SHOT_CLOCK_S)
+        await asyncio.sleep(room.shot_clock)
     except asyncio.CancelledError:
         return
     room.clock_task = None  # detach self so the re-arm below doesn't cancel us
     async with room.lock:
         cur = None
-        if room.started and not room.solo and not room.window_open:
+        if room.started and room.shot_clock > 0 and not room.window_open:
             if room.turn < len(room.players) and room.players[room.turn].stack:
                 cur = room.players[room.turn]
     if cur and (await _flip_for(room, cur))[0]:
@@ -151,6 +151,7 @@ async def ws(sock: WebSocket) -> None:
     if solo:
         room = make_room()
         room.solo = True
+        room.shot_clock = 0.0  # off by default in solo; player can enable for drilling
     elif code and code in ROOMS:
         room = ROOMS[code]
     else:
@@ -181,6 +182,12 @@ async def ws(sock: WebSocket) -> None:
                             spans[r] = min(n, MAX_SPAN)  # >= min keeps it on; clamp to max
                     room.rule_spans = spans
                     await _broadcast_state(room)
+            elif action == "set_clock":
+                sec = msg.get("seconds")
+                if isinstance(sec, (int, float)) and (room.solo or not room.started):
+                    room.shot_clock = 0.0 if sec <= 0 else max(0.5, min(float(sec), 10.0))
+                    await _broadcast_state(room)
+                    await _arm_clock(room)  # apply now (e.g. solo mid-game toggle)
             elif action == "deal":
                 async with room.lock:
                     # Solo can (re)deal anytime with 1 player; multiplayer needs 2.
