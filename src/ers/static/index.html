@@ -81,7 +81,7 @@
       slap takes the pile; a wrong slap burns a card to the bottom.</p>
       <p class="vals">Card values — A = 1 · J = 12 · Q = 11 · K = 13 · rest face value.</p>
       <ul>
-        <li><b>square</b> — digits of the last 2+ cards concatenate to a perfect square (≥2 digits). J,A → "121" = 11²</li>
+        <li><b>square</b> — digits of the last 2+ cards concatenate to a perfect square (≥2 digits). 12,1 → "121" = 11²</li>
         <li><b>cube</b> — same, a perfect cube. 2,7 → "27" = 3³</li>
         <li><b>arithmetic</b> — top 3 are an arithmetic sequence, either direction. 2,4,6 · 5,5,5</li>
         <li><b>geometric</b> — top 3 are a geometric sequence. 2,4,8</li>
@@ -93,7 +93,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const FACE = {1:"A",11:"J",12:"Q",13:"K"};
+const VAL = {11:12, 12:11};  // shown value: J=12, Q=11; K=13/A=1/rest are identity
 let ws, mySeat = null, solo = false;
 const sc = { hit: 0, miss: 0, wrong: 0 };
 function drawScore() {
@@ -107,7 +107,7 @@ function slap() {
 }
 
 function show(card) {
-  $("#card").textContent = card == null ? "—" : (FACE[card] || card);
+  $("#card").textContent = card == null ? "—" : (VAL[card] || card);
 }
 
 function render(room) {
