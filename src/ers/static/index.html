@@ -125,6 +125,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const VAL = {11:12, 12:11};  // shown value: J=12, Q=11; K=13/A=1/rest are identity
+const SEAT_COLORS = ["#7aa2f7", "#e0af68", "#9ece6a", "#bb9af7", "#f7768e", "#7dcfff"];
 let ws, mySeat = null, solo = false;
 const sc = { hit: 0, miss: 0, wrong: 0 };
 function drawScore() {
@@ -139,6 +140,7 @@ function slap() {
 
 function show(card) {
   $("#card").textContent = card == null ? "—" : (VAL[card] || card);
+  if (card == null) $("#card").style.color = "";  // reset to default when pile cleared
 }
 
 function render(room) {
@@ -147,7 +149,8 @@ function render(room) {
   room.players.forEach((p, i) => {
     const li = document.createElement("li");
     li.classList.toggle("turn", room.started && i === room.turn);
-    li.innerHTML = `<span>${p.name}${i===mySeat?" (you)":""}</span><span>${p.cards} cards</span>`;
+    const col = SEAT_COLORS[i % SEAT_COLORS.length];
+    li.innerHTML = `<span style="color:${col}">${p.name}${i===mySeat?" (you)":""}</span><span>${p.cards} cards</span>`;
     $("#players").appendChild(li);
   });
   show(room.pile_top);
@@ -210,6 +213,9 @@ function connect(hello) {
     }
     else if (m.type === "state") render(m.room);
     else if (m.type === "flip") {
+      // Color the card by who played it — makes each play obvious (alternates)
+      // and shows whose card is on top.
+      $("#card").style.color = SEAT_COLORS[m.seat % SEAT_COLORS.length];
       // Stamp paint time of the new card; the state msg that paints it lands
       // right after this, so the rAF fires on the frame showing the new card.
       shownAt = null;
