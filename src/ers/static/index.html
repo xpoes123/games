@@ -212,9 +212,11 @@ function connect(hello) {
       // Cosmetic only — the SERVER auto-flips; this bar never gates input.
       // Empty ~150ms early so it's never optimistic relative to the real deadline.
       const bar = $("#clockbar"), dur = Math.max(0.1, m.seconds - 0.15);
-      bar.style.transition = "none"; bar.style.width = "100%";
-      requestAnimationFrame(() => {
-        bar.style.transition = `width ${dur}s linear`; bar.style.width = "0%"; });
+      bar.style.transition = "none";
+      bar.style.width = "100%";
+      void bar.offsetWidth;  // force reflow so 100% commits as the restart baseline
+      bar.style.transition = `width ${dur}s linear`;
+      bar.style.width = "0%";
     }
     else if (m.type === "missed") { sc.miss++; drawScore();
       status(`missed — that was ${m.rule}`, "bad"); }
