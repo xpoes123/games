@@ -19,8 +19,10 @@ from fastapi.staticfiles import StaticFiles
 
 from src.ers.rooms import (
     ALL_RULES, MAX_SPAN, ROOMS, SLAP_WINDOW_S, Player, Room,
-    make_room, min_span, slap_rule,
+    is_slappable, make_room, min_span, slap_rule,
 )
+
+CPU_THINK = 0.6  # delay before the CPU flips on its own turn (so play is watchable)
 
 log = logging.getLogger("ers")
 
@@ -36,6 +38,8 @@ async def index() -> FileResponse:
 
 
 async def _send(p: Player, payload: dict) -> None:
+    if p.is_cpu:  # no socket
+        return
     try:
         await p.socket.send_text(json.dumps(payload))
     except Exception:
@@ -69,6 +73,7 @@ async def _open_slap_window(room: Room) -> None:
         await _broadcast(room, {"type": "game_over", "name": end.name})
     await _broadcast_state(room)
     await _arm_clock(room)
+    _cpu_after_change(room)
 
 
 async def _arm_clock(room: Room) -> None:
@@ -114,6 +119,7 @@ async def _flip_for(room: Room, p: Player) -> tuple[bool, str | None]:
     await _broadcast(room, {"type": "flip", "seat": seat, "card": card})
     await _broadcast_state(room)
     await _arm_clock(room)  # turn advanced → restart clock for next player
+    _cpu_after_change(room)
     return True, None
 
 
@@ -123,17 +129,57 @@ async def _handle_flip(room: Room, p: Player) -> None:
         await _send(p, {"type": "error", "message": err})
 
 
-async def _handle_slap(room: Room, p: Player, msg: dict) -> None:
-    arrival = time.monotonic()
-    reaction = msg.get("reaction")
-    reaction = float(reaction) if isinstance(reaction, (int, float)) else None
+# --- CPU opponent (solo practice) ----------------------------------------
+def _cpu_after_change(room: Room) -> None:
+    """React to a state change: the CPU slaps a live pile, else flips on its
+    turn. Synchronous — only (re)schedules timers, no awaits, so it can't race
+    the state it just read. Called after every deal / flip / slap resolution."""
+    cpu = next((p for p in room.players if p.is_cpu), None)
+    for attr in ("cpu_flip_task", "cpu_slap_task"):
+        t = getattr(room, attr)
+        if t:
+            t.cancel()
+            setattr(room, attr, None)
+    if not cpu or not room.started:
+        return
+    if is_slappable(room.pile, room.rule_spans):
+        room.cpu_slap_task = asyncio.create_task(_cpu_slap(room, cpu))
+    elif room.turn == room.seat_of(cpu) and cpu.stack:
+        room.cpu_flip_task = asyncio.create_task(_cpu_flip(room, cpu))
+
+
+async def _cpu_flip(room: Room, cpu: Player) -> None:
+    try:
+        await asyncio.sleep(CPU_THINK)
+    except asyncio.CancelledError:
+        return
+    room.cpu_flip_task = None
+    await _flip_for(room, cpu)
+
+
+async def _cpu_slap(room: Room, cpu: Player) -> None:
+    try:
+        await asyncio.sleep(room.cpu_reaction)  # difficulty = how fast it reacts
+    except asyncio.CancelledError:
+        return
+    room.cpu_slap_task = None
+    await _process_slap(room, cpu, room.cpu_reaction, time.monotonic())
+
+
+async def _process_slap(room: Room, p: Player, reaction: float | None, arrival: float) -> None:
     async with room.lock:
         result = room.record_slap(p, reaction, arrival)
     if result == "wrong":
-        await _send(p, {"type": "burned"})
+        await _send(p, {"type": "burned"})  # no-op for CPU
         await _broadcast_state(room)
     elif result == "open":
         asyncio.create_task(_open_slap_window(room))
+
+
+async def _handle_slap(room: Room, p: Player, msg: dict) -> None:
+    reaction = msg.get("reaction")
+    reaction = float(reaction) if isinstance(reaction, (int, float)) else None
+    await _process_slap(room, p, reaction, time.monotonic())
 
 
 @app.websocket("/ws")
@@ -161,6 +207,9 @@ async def ws(sock: WebSocket) -> None:
         return
 
     p = room.add(name, sock)
+    if room.solo and not any(pl.is_cpu for pl in room.players):
+        cpu = room.add("CPU", None)  # seat 1: the opponent
+        cpu.is_cpu = True
     await _send(p, {"type": "joined", "code": room.code, "seat": room.seat_of(p), "solo": room.solo})
     await _broadcast_state(room)
 
@@ -188,6 +237,11 @@ async def ws(sock: WebSocket) -> None:
                     room.shot_clock = 0.0 if sec <= 0 else max(0.5, min(float(sec), 10.0))
                     await _broadcast_state(room)
                     await _arm_clock(room)  # apply now (e.g. solo mid-game toggle)
+            elif action == "set_cpu":
+                r = msg.get("reaction")
+                if isinstance(r, (int, float)) and room.solo:
+                    room.cpu_reaction = max(0.1, min(float(r), 5.0))
+                    await _broadcast_state(room)
             elif action == "deal":
                 async with room.lock:
                     # Solo can (re)deal anytime with 1 player; multiplayer needs 2.
@@ -197,6 +251,7 @@ async def ws(sock: WebSocket) -> None:
                 await _broadcast(room, {"type": "dealt"})
                 await _broadcast_state(room)
                 await _arm_clock(room)
+                _cpu_after_change(room)
             elif action == "flip":
                 await _handle_flip(room, p)
             elif action == "slap":
@@ -207,10 +262,13 @@ async def ws(sock: WebSocket) -> None:
         p.connected = False
         if p in room.players:
             room.players.remove(p)
-        if not room.players:
-            if room.clock_task:
-                room.clock_task.cancel()
+        # Drop the room once no humans remain (a lone CPU doesn't keep it alive).
+        if not any(pl for pl in room.players if not pl.is_cpu):
+            for t in (room.clock_task, room.cpu_flip_task, room.cpu_slap_task):
+                if t:
+                    t.cancel()
             ROOMS.pop(room.code, None)
         else:
             await _broadcast_state(room)
             await _arm_clock(room)  # seats shifted; restart clock for current turn
+            _cpu_after_change(room)

@@ -60,7 +60,7 @@
     <input id="name" placeholder="name" maxlength="24" />
     <input id="code" placeholder="room code (blank = new)" maxlength="4" style="width:11ch" />
     <button id="joinBtn">join</button>
-    <button id="soloBtn">practice solo</button>
+    <button id="soloBtn">vs CPU</button>
   </div>
 
   <div id="game" class="hidden">
@@ -81,6 +81,13 @@
           <option value="2">2s</option>
           <option value="3">3s</option>
           <option value="5">5s</option>
+        </select></label>
+      <label id="cpuRow" class="hidden">CPU difficulty
+        <select id="cpu">
+          <option value="1.4">easy</option>
+          <option value="0.8">medium</option>
+          <option value="0.45">hard</option>
+          <option value="0.28">insane</option>
         </select></label>
       <div id="ruleToggles"></div>
     </details>
@@ -152,6 +159,8 @@ function render(room) {
   $("#mode").disabled = room.started && !solo;
   $("#clock").value = String(room.shot_clock || 0);
   $("#clock").disabled = room.started && !solo;
+  $("#cpuRow").classList.toggle("hidden", !room.cpu);
+  if (room.cpu) $("#cpu").value = String(room.cpu_reaction);
   renderRules(room);
 }
 
@@ -194,7 +203,7 @@ function connect(hello) {
       if (solo) {
         $("#deal").textContent = "shuffle";
         $("#score").classList.remove("hidden"); drawScore();
-        status("solo practice — flip, slap a pattern; misses are revealed");
+        status("vs CPU — flip on your turn, slap a pattern before it does");
         ws.send(JSON.stringify({ type: "deal" }));
       } else status("joined room " + m.code);
     }
@@ -234,6 +243,7 @@ $("#soloBtn").onclick = () => connect({ name: $("#name").value.trim() || "anon",
 
 $("#mode").onchange = () => ws.send(JSON.stringify({ type: "set_mode", mode: $("#mode").value }));
 $("#clock").onchange = () => ws.send(JSON.stringify({ type: "set_clock", seconds: +$("#clock").value }));
+$("#cpu").onchange = () => ws.send(JSON.stringify({ type: "set_cpu", reaction: +$("#cpu").value }));
 $("#deal").onclick = () => ws.send(JSON.stringify({ type: "deal" }));
 $("#flip").onclick = () => { if (!$("#flip").disabled) ws.send(JSON.stringify({ type: "flip" })); };
 $("#slap").onclick = () => slap();

@@ -127,6 +127,7 @@ class Player:
     socket: object
     stack: list[int] = field(default_factory=list)  # face-down; draw from end
     connected: bool = True
+    is_cpu: bool = False
 
 
 @dataclass
@@ -136,7 +137,8 @@ class Room:
     pile: list[int] = field(default_factory=list)
     turn: int = 0
     started: bool = False
-    solo: bool = False  # practice room: 1 player, no win condition, re-deal freely
+    solo: bool = False  # practice room: 1 human vs a CPU, re-deal freely
+    cpu_reaction: float = 0.8  # CPU's slap reaction time (seconds) = difficulty
     # Per-rule difficulty: min cards each pattern must span (0 = off). See settings.
     rule_spans: dict = field(default_factory=lambda: dict(DEFAULT_SPANS))
     shot_clock: float = SHOT_CLOCK_S  # seconds to flip before auto-flip; 0 = off
@@ -149,7 +151,9 @@ class Room:
     locked_out: set = field(default_factory=set)  # wrong-slapped this pile
     window_open: bool = False
     pending_rule: str | None = None  # which rule the live slap window is on
-    clock_task: object = field(default=None, repr=False, compare=False)  # shot-clock timer
+    clock_task: object = field(default=None, repr=False, compare=False)   # shot-clock timer
+    cpu_flip_task: object = field(default=None, repr=False, compare=False)
+    cpu_slap_task: object = field(default=None, repr=False, compare=False)
 
     # --- setup ---------------------------------------------------------
     def add(self, name: str, socket) -> Player:
@@ -252,7 +256,7 @@ class Room:
 
     def winner(self) -> Player | None:
         """Whole-deck winner, or None if the game is still going."""
-        if not self.started or self.solo:  # solo practice never "ends"
+        if not self.started or len(self.players) < 2:
             return None
         alive = [p for p in self.players if p.stack]
         return alive[0] if len(alive) == 1 else None
@@ -267,6 +271,8 @@ class Room:
             "spans": {r: self.rule_spans.get(r, 0) for r in ALL_RULES},
             "max_span": MAX_SPAN,
             "shot_clock": self.shot_clock,
+            "cpu": any(p.is_cpu for p in self.players),
+            "cpu_reaction": self.cpu_reaction,
             "turn": self.turn,
             "pile_count": len(self.pile),
             "pile_top": self.pile[-1] if self.pile else None,
