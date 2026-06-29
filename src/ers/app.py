@@ -18,7 +18,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.ers.rooms import (
-    ALL_RULES, ROOMS, SHOT_CLOCK_S, SLAP_WINDOW_S, Player, Room, make_room, slap_rule,
+    ALL_RULES, MAX_SPAN, ROOMS, SHOT_CLOCK_S, SLAP_WINDOW_S, Player, Room,
+    make_room, min_span, slap_rule,
 )
 
 log = logging.getLogger("ers")
@@ -103,7 +104,7 @@ async def _clock(room: Room) -> None:
 async def _flip_for(room: Room, p: Player) -> tuple[bool, str | None]:
     async with room.lock:
         # Solo practice: flipping past a live (unslapped) pile is a miss.
-        missed = slap_rule(room.pile, room.rules) if room.solo and not room.window_open else None
+        missed = slap_rule(room.pile, room.rule_spans) if room.solo and not room.window_open else None
         seat = room.seat_of(p)
         card, err = room.flip(p)
     if err:
@@ -170,10 +171,15 @@ async def ws(sock: WebSocket) -> None:
                 if msg.get("mode") in ("reflex", "ping") and not room.started:
                     room.mode = msg["mode"]
                     await _broadcast_state(room)
-            elif action == "set_rules":
-                picked = msg.get("rules")
-                if isinstance(picked, list) and (room.solo or not room.started):
-                    room.rules = {r for r in picked if r in ALL_RULES}
+            elif action == "set_spans":
+                picked = msg.get("spans")
+                if isinstance(picked, dict) and (room.solo or not room.started):
+                    spans = {}
+                    for r in ALL_RULES:
+                        n = picked.get(r)
+                        if isinstance(n, int) and n >= min_span(r):
+                            spans[r] = min(n, MAX_SPAN)  # >= min keeps it on; clamp to max
+                    room.rule_spans = spans
                     await _broadcast_state(room)
             elif action == "deal":
                 async with room.lock:

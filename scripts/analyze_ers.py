@@ -12,10 +12,10 @@ from __future__ import annotations
 import random
 from collections import Counter
 
-from src.ers.rooms import CONCAT_MAX, matching_rules
+from src.ers.rooms import MAX_SPAN, matching_rules
 
 DECK = [r for r in range(1, 14) for _ in range(4)]
-WINDOW = max(CONCAT_MAX, 3)  # rules never look deeper than this many top cards
+WINDOW = MAX_SPAN  # rules never look deeper than this many top cards
 
 
 def normal_rules(window: list[int]) -> list[str]:

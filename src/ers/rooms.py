@@ -17,9 +17,8 @@ from math import isqrt
 # triggers too few patterns, so the easier-to-hit value sits on the commoner card.
 RANKS = list(range(1, 14))
 
-# Longest run of recent cards a concatenation (square/cube) check will scan.
-# ponytail: nobody tracks more than ~4 cards in their head; bump if wanted.
-CONCAT_MAX = 4
+# Most cards any single pattern is allowed to span (the difficulty dial maxes here).
+MAX_SPAN = 6
 
 
 def value(rank: int) -> int:
@@ -62,57 +61,64 @@ def _is_cube(n: int) -> bool:
     return any(c >= 0 and c ** 3 == n for c in (r - 1, r, r + 1))
 
 
-# All slap rules, in label-priority order. A room enables a subset (see settings).
+# All slap rules, in label-priority order.
 ALL_RULES = ("arithmetic", "geometric", "fibonacci", "square", "cube")
+# Sequence rules span >= 3 cards; concat rules (square/cube) span >= 2.
+SEQ_RULES = ("arithmetic", "geometric", "fibonacci")
+
+# Per-rule "span" = minimum number of cards the pattern must cover (the difficulty
+# dial). 0 = rule off. Default = the current balance.
+DEFAULT_SPANS = {"arithmetic": 3, "geometric": 3, "fibonacci": 4, "square": 2, "cube": 2}
 
 
-def matching_rules(pile: list[int], enabled=ALL_RULES) -> list[str]:
-    """Every enabled Math-ERS rule the top of the pile satisfies (priority order).
+def min_span(rule: str) -> int:
+    return 3 if rule in SEQ_RULES else 2
 
-    Single source of truth. All checks look at the most recent cards (the
-    just-played card must complete the pattern). To add a rule, add a check here.
-    """
+
+def _arith(vs: list[int]) -> bool:  # constant difference across the whole run
+    return all(2 * vs[i] == vs[i - 1] + vs[i + 1] for i in range(1, len(vs) - 1))
+
+
+def _geom(vs: list[int]) -> bool:   # constant ratio (every consecutive triple)
+    return all(vs[i] * vs[i] == vs[i - 1] * vs[i + 1] for i in range(1, len(vs) - 1))
+
+
+def _fib(vs: list[int]) -> bool:    # each card = previous two summed, mod 12
+    return all((vs[i - 2] + vs[i - 1]) % 12 == vs[i] % 12 for i in range(2, len(vs)))
+
+
+def matching_rules(pile: list[int], spans: dict = DEFAULT_SPANS) -> list[str]:
+    """Every rule the top of the pile satisfies, given each rule's span (min
+    cards). Single source of truth. To add a rule, add a check here."""
     out: list[str] = []
     if len(pile) < 2:
         return out
     v = [value(r) for r in pile]
 
-    # Arithmetic / geometric: exactly the top 3 cards. Constant runs count.
-    if len(pile) >= 3:
-        a, b, c = v[-3], v[-2], v[-1]
-        if "arithmetic" in enabled and 2 * b == a + c:     # (d may be 0)
-            out.append("arithmetic")
-        if "geometric" in enabled and b * b == a * c:      # (ratio may be 1)
-            out.append("geometric")
+    # Sequences: the top N cards form the pattern, where N is the rule's span.
+    for name, ok in (("arithmetic", _arith), ("geometric", _geom), ("fibonacci", _fib)):
+        n = spans.get(name, 0)
+        if n >= 3 and len(v) >= n and ok(v[-n:]):
+            out.append(name)
 
-    # Fibonacci: a 4-term Fibonacci run (mod 12) — each card is the previous two
-    # summed. Needs the top 4 cards, so you can't pre-load from just the last 2.
-    if "fibonacci" in enabled and len(pile) >= 4:
-        a, b, c, d = v[-4:]
-        if (a + b) % 12 == c % 12 and (b + c) % 12 == d % 12:
-            out.append("fibonacci")
-
-    # Squares / cubes: concatenate the digits of any top-window of >= 2 cards.
-    if "square" in enabled or "cube" in enabled:
-        sq = cu = False
-        for k in range(2, min(CONCAT_MAX, len(pile)) + 1):
-            num = int("".join(str(x) for x in v[-k:]))
-            sq = sq or _is_square(num)
-            cu = cu or _is_cube(num)
-        if sq and "square" in enabled:
-            out.append("square")
-        if cu and "cube" in enabled:
-            out.append("cube")
+    # Squares / cubes: concatenate the digits of any top window of >= N cards.
+    for name, test in (("square", _is_square), ("cube", _is_cube)):
+        n = spans.get(name, 0)
+        if n >= 2:
+            for k in range(n, min(MAX_SPAN, len(v)) + 1):
+                if test(int("".join(str(x) for x in v[-k:]))):
+                    out.append(name)
+                    break
     return out
 
 
-def slap_rule(pile: list[int], enabled=ALL_RULES) -> str | None:
-    rules = matching_rules(pile, enabled)
+def slap_rule(pile: list[int], spans: dict = DEFAULT_SPANS) -> str | None:
+    rules = matching_rules(pile, spans)
     return rules[0] if rules else None
 
 
-def is_slappable(pile: list[int], enabled=ALL_RULES) -> bool:
-    return bool(matching_rules(pile, enabled))
+def is_slappable(pile: list[int], spans: dict = DEFAULT_SPANS) -> bool:
+    return bool(matching_rules(pile, spans))
 
 
 @dataclass(eq=False)  # identity hash/eq — players are tracked by object, not value
@@ -131,7 +137,8 @@ class Room:
     turn: int = 0
     started: bool = False
     solo: bool = False  # practice room: 1 player, no win condition, re-deal freely
-    rules: set = field(default_factory=lambda: set(ALL_RULES))  # enabled slap rules
+    # Per-rule difficulty: min cards each pattern must span (0 = off). See settings.
+    rule_spans: dict = field(default_factory=lambda: dict(DEFAULT_SPANS))
     # "reflex": rank slaps by client reaction time (ping-independent, trusts
     # client). "ping": rank by server arrival (first packet wins, no trust).
     mode: str = "reflex"
@@ -207,7 +214,7 @@ class Room:
         """
         if player in self.locked_out:
             return "ignore"
-        if not is_slappable(self.pile, self.rules):
+        if not is_slappable(self.pile, self.rule_spans):
             # Penalty: burn one card to the bottom of the pile, lock out.
             self.locked_out.add(player)
             if player.stack:
@@ -224,7 +231,7 @@ class Room:
         self.slaps[player] = key
         if not self.window_open:
             self.window_open = True
-            self.pending_rule = slap_rule(self.pile, self.rules)
+            self.pending_rule = slap_rule(self.pile, self.rule_spans)
             return "open"
         return "add"
 
@@ -255,8 +262,9 @@ class Room:
             "code": self.code,
             "started": self.started,
             "mode": self.mode,
-            "rules": sorted(self.rules),
             "all_rules": list(ALL_RULES),
+            "spans": {r: self.rule_spans.get(r, 0) for r in ALL_RULES},
+            "max_span": MAX_SPAN,
             "turn": self.turn,
             "pile_count": len(self.pile),
             "pile_top": self.pile[-1] if self.pile else None,
@@ -287,13 +295,18 @@ def demo() -> None:
     assert slap_rule([2, 4, 6]) == "arithmetic" # d=2
     assert slap_rule([5, 5, 5]) == "arithmetic" # constant run counts (d=0)
     assert slap_rule([2, 4, 8]) == "geometric"  # ratio 2
-    assert slap_rule([1, 2, 3, 5]) == "fibonacci"  # 4-term run: 1,2,3,5
+    assert slap_rule([1, 2, 3, 5]) == "fibonacci"  # default fib span 4: 1,2,3,5
     assert slap_rule([5, 8, 1, 9]) == "fibonacci"  # 4-term, mod 12 wrap: 5+8≡1, 8+1≡9
-    assert slap_rule([2, 3, 5]) is None            # fibonacci now needs 4 cards
+    assert slap_rule([2, 3, 5]) is None            # default fib needs 4 cards
     assert slap_rule([10, 4, 1]) is None           # ace is only 1 now, nothing fires
-    # rule toggles: disabling a rule makes its piles non-slappable
-    assert slap_rule([1, 2, 3, 5], enabled={"square"}) is None
-    assert slap_rule([1, 6], enabled={"arithmetic"}) is None   # square off → not slappable
+
+    # difficulty dial (per-rule span / min cards):
+    assert slap_rule([2, 3, 5], {"fibonacci": 3}) == "fibonacci"   # 3-term fib
+    assert slap_rule([2, 4, 6], {"arithmetic": 4}) is None         # needs top 4
+    assert slap_rule([2, 4, 6, 8], {"arithmetic": 4}) == "arithmetic"
+    assert slap_rule([1, 6], {"square": 3}) is None                # "16" too short now
+    assert slap_rule([1, 2, 1], {"square": 3}) == "square"         # "121" = 11², 3 cards
+    assert slap_rule([1, 2, 3, 5], {"square": 2}) is None          # fib off → not slappable
     assert slap_rule([11, 1]) == "square"        # J(rank11)=12 + ace=1 → "121" = 11²
     assert slap_rule([12, 1]) is None            # Q(rank12)=11 + ace → "111"/"1114", neither
     assert slap_rule([2, 3]) is None             # "23": not square/cube, <3 for seq

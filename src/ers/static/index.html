@@ -40,8 +40,9 @@
   #settings { margin:1rem 0; border:1px solid var(--border); padding:.5rem .75rem; }
   #settings summary { cursor:pointer; color:var(--accent); }
   #settings > label { margin:.6rem 0 0; }
-  #ruleToggles { display:flex; flex-wrap:wrap; gap:.4rem 1rem; margin-top:.7rem; }
-  #ruleToggles label { color:var(--fg); }
+  #ruleToggles { display:flex; flex-direction:column; gap:.4rem; margin-top:.7rem; }
+  #ruleToggles label { color:var(--fg); display:flex; justify-content:space-between;
+                       align-items:center; max-width:260px; }
   #rules { margin-top:1.5rem; border:1px solid var(--border); padding:.5rem .75rem; }
   #rules summary { cursor:pointer; color:var(--accent); }
   #rules p { color:var(--muted); margin:.6rem 0; }
@@ -144,24 +145,29 @@ function render(room) {
   renderRules(room);
 }
 
+const SEQ = ["arithmetic", "geometric", "fibonacci"];  // span >= 3; concat rules >= 2
 function renderRules(room) {
   const wrap = $("#ruleToggles");
   if (!wrap.children.length && room.all_rules) {
     room.all_rules.forEach(r => {
+      const lo = SEQ.includes(r) ? 3 : 2;
+      let opts = `<option value="0">off</option>`;
+      for (let n = lo; n <= room.max_span; n++) opts += `<option value="${n}">${n} cards</option>`;
       const lbl = document.createElement("label");
-      lbl.innerHTML = `<input type="checkbox" value="${r}"> ${r}`;
-      lbl.querySelector("input").onchange = sendRules;
+      lbl.innerHTML = `${r} <select data-rule="${r}">${opts}</select>`;
+      lbl.querySelector("select").onchange = sendSpans;
       wrap.appendChild(lbl);
     });
   }
-  wrap.querySelectorAll("input").forEach(cb => {
-    cb.checked = (room.rules || []).includes(cb.value);
-    cb.disabled = room.started && !solo;  // solo can retune rules anytime to drill one
+  wrap.querySelectorAll("select").forEach(sel => {
+    sel.value = String((room.spans || {})[sel.dataset.rule] || 0);
+    sel.disabled = room.started && !solo;  // solo can retune anytime to drill one
   });
 }
-function sendRules() {
-  const on = [...$("#ruleToggles").querySelectorAll("input:checked")].map(i => i.value);
-  ws.send(JSON.stringify({ type: "set_rules", rules: on }));
+function sendSpans() {
+  const spans = {};
+  $("#ruleToggles").querySelectorAll("select").forEach(s => { spans[s.dataset.rule] = +s.value; });
+  ws.send(JSON.stringify({ type: "set_spans", spans }));
 }
 
 function status(msg, cls) { $("#status").textContent = msg; $("#status").style.color =
