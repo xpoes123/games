@@ -62,8 +62,12 @@ def _is_cube(n: int) -> bool:
     return any(c >= 0 and c ** 3 == n for c in (r - 1, r, r + 1))
 
 
-def matching_rules(pile: list[int]) -> list[str]:
-    """Every Math-ERS rule the top of the pile satisfies (priority order).
+# All slap rules, in label-priority order. A room enables a subset (see settings).
+ALL_RULES = ("arithmetic", "geometric", "fibonacci", "square", "cube")
+
+
+def matching_rules(pile: list[int], enabled=ALL_RULES) -> list[str]:
+    """Every enabled Math-ERS rule the top of the pile satisfies (priority order).
 
     Single source of truth. All checks look at the most recent cards (the
     just-played card must complete the pattern). To add a rule, add a check here.
@@ -73,36 +77,42 @@ def matching_rules(pile: list[int]) -> list[str]:
         return out
     v = [value(r) for r in pile]
 
-    # Sequences: exactly the top 3 cards, in play order. Constant runs count.
+    # Arithmetic / geometric: exactly the top 3 cards. Constant runs count.
     if len(pile) >= 3:
         a, b, c = v[-3], v[-2], v[-1]
-        if 2 * b == a + c:            # arithmetic (d may be 0)
+        if "arithmetic" in enabled and 2 * b == a + c:     # (d may be 0)
             out.append("arithmetic")
-        if b * b == a * c:            # geometric (ratio may be 1)
+        if "geometric" in enabled and b * b == a * c:      # (ratio may be 1)
             out.append("geometric")
-        if (a + b) % 12 == c % 12:    # fibonacci, mod 12 (sum wraps around)
+
+    # Fibonacci: a 4-term Fibonacci run (mod 12) — each card is the previous two
+    # summed. Needs the top 4 cards, so you can't pre-load from just the last 2.
+    if "fibonacci" in enabled and len(pile) >= 4:
+        a, b, c, d = v[-4:]
+        if (a + b) % 12 == c % 12 and (b + c) % 12 == d % 12:
             out.append("fibonacci")
 
     # Squares / cubes: concatenate the digits of any top-window of >= 2 cards.
-    sq = cu = False
-    for k in range(2, min(CONCAT_MAX, len(pile)) + 1):
-        num = int("".join(str(x) for x in v[-k:]))
-        sq = sq or _is_square(num)
-        cu = cu or _is_cube(num)
-    if sq:
-        out.append("square")
-    if cu:
-        out.append("cube")
+    if "square" in enabled or "cube" in enabled:
+        sq = cu = False
+        for k in range(2, min(CONCAT_MAX, len(pile)) + 1):
+            num = int("".join(str(x) for x in v[-k:]))
+            sq = sq or _is_square(num)
+            cu = cu or _is_cube(num)
+        if sq and "square" in enabled:
+            out.append("square")
+        if cu and "cube" in enabled:
+            out.append("cube")
     return out
 
 
-def slap_rule(pile: list[int]) -> str | None:
-    rules = matching_rules(pile)
+def slap_rule(pile: list[int], enabled=ALL_RULES) -> str | None:
+    rules = matching_rules(pile, enabled)
     return rules[0] if rules else None
 
 
-def is_slappable(pile: list[int]) -> bool:
-    return bool(matching_rules(pile))
+def is_slappable(pile: list[int], enabled=ALL_RULES) -> bool:
+    return bool(matching_rules(pile, enabled))
 
 
 @dataclass(eq=False)  # identity hash/eq — players are tracked by object, not value
@@ -121,6 +131,7 @@ class Room:
     turn: int = 0
     started: bool = False
     solo: bool = False  # practice room: 1 player, no win condition, re-deal freely
+    rules: set = field(default_factory=lambda: set(ALL_RULES))  # enabled slap rules
     # "reflex": rank slaps by client reaction time (ping-independent, trusts
     # client). "ping": rank by server arrival (first packet wins, no trust).
     mode: str = "reflex"
@@ -196,7 +207,7 @@ class Room:
         """
         if player in self.locked_out:
             return "ignore"
-        if not is_slappable(self.pile):
+        if not is_slappable(self.pile, self.rules):
             # Penalty: burn one card to the bottom of the pile, lock out.
             self.locked_out.add(player)
             if player.stack:
@@ -213,7 +224,7 @@ class Room:
         self.slaps[player] = key
         if not self.window_open:
             self.window_open = True
-            self.pending_rule = slap_rule(self.pile)
+            self.pending_rule = slap_rule(self.pile, self.rules)
             return "open"
         return "add"
 
@@ -244,6 +255,8 @@ class Room:
             "code": self.code,
             "started": self.started,
             "mode": self.mode,
+            "rules": sorted(self.rules),
+            "all_rules": list(ALL_RULES),
             "turn": self.turn,
             "pile_count": len(self.pile),
             "pile_top": self.pile[-1] if self.pile else None,
@@ -274,10 +287,13 @@ def demo() -> None:
     assert slap_rule([2, 4, 6]) == "arithmetic" # d=2
     assert slap_rule([5, 5, 5]) == "arithmetic" # constant run counts (d=0)
     assert slap_rule([2, 4, 8]) == "geometric"  # ratio 2
-    assert slap_rule([2, 3, 5]) == "fibonacci"  # 2+3=5
-    assert slap_rule([10, 5, 3]) == "fibonacci" # (10+5) mod 12 = 3, wraps around
-    assert slap_rule([6, 11, 6]) == "fibonacci" # J=12≡0 mod 12, so 6+J≡6 (the J-as-zero case)
-    assert slap_rule([10, 4, 1]) is None        # ace is only 1 now (no high), nothing fires
+    assert slap_rule([1, 2, 3, 5]) == "fibonacci"  # 4-term run: 1,2,3,5
+    assert slap_rule([5, 8, 1, 9]) == "fibonacci"  # 4-term, mod 12 wrap: 5+8≡1, 8+1≡9
+    assert slap_rule([2, 3, 5]) is None            # fibonacci now needs 4 cards
+    assert slap_rule([10, 4, 1]) is None           # ace is only 1 now, nothing fires
+    # rule toggles: disabling a rule makes its piles non-slappable
+    assert slap_rule([1, 2, 3, 5], enabled={"square"}) is None
+    assert slap_rule([1, 6], enabled={"arithmetic"}) is None   # square off → not slappable
     assert slap_rule([11, 1]) == "square"        # J(rank11)=12 + ace=1 → "121" = 11²
     assert slap_rule([12, 1]) is None            # Q(rank12)=11 + ace → "111"/"1114", neither
     assert slap_rule([2, 3]) is None             # "23": not square/cube, <3 for seq
