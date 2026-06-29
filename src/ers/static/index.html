@@ -45,6 +45,7 @@
     <input id="name" placeholder="name" maxlength="24" />
     <input id="code" placeholder="room code (blank = new)" maxlength="4" style="width:11ch" />
     <button id="joinBtn">join</button>
+    <button id="soloBtn">practice solo</button>
   </div>
 
   <div id="game" class="hidden">
@@ -65,13 +66,18 @@
       <button id="slap" class="big">SLAP <span style="opacity:.7">(space)</span></button>
     </div>
     <div id="status"></div>
+    <div id="score" class="hidden" style="color:var(--muted); margin-top:.5rem"></div>
   </div>
 </main>
 
 <script>
 const $ = s => document.querySelector(s);
 const FACE = {1:"A",11:"J",12:"Q",13:"K"};
-let ws, mySeat = null;
+let ws, mySeat = null, solo = false;
+const sc = { hit: 0, miss: 0, wrong: 0 };
+function drawScore() {
+  $("#score").textContent = `hits ${sc.hit} · missed ${sc.miss} · wrong ${sc.wrong}`;
+}
 // Reaction timing: stamped when the new card actually paints (rAF after flip).
 let shownAt = null;
 function slap() {
@@ -95,7 +101,8 @@ function render(room) {
   show(room.pile_top);
   $("#pileCount").textContent = room.started ? `pile: ${room.pile_count}` : "not dealt";
   $("#flip").disabled = !room.started || room.turn !== mySeat;
-  $("#deal").disabled = room.started || room.players.length < 2;
+  // Solo: deal acts as "shuffle" and is always available; multiplayer needs 2.
+  $("#deal").disabled = solo ? false : (room.started || room.players.length < 2);
   $("#mode").value = room.mode;
   $("#mode").disabled = room.started;  // locked once the game starts
 }
@@ -103,15 +110,21 @@ function render(room) {
 function status(msg, cls) { $("#status").textContent = msg; $("#status").style.color =
   cls === "good" ? "var(--good)" : cls === "bad" ? "var(--bad)" : "var(--muted)"; }
 
-$("#joinBtn").onclick = () => {
-  const name = $("#name").value.trim() || "anon";
-  const code = $("#code").value.trim().toUpperCase();
+function connect(hello) {
   ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ers/ws");
-  ws.onopen = () => ws.send(JSON.stringify({ type: "hello", name, code }));
+  ws.onopen = () => ws.send(JSON.stringify({ type: "hello", ...hello }));
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
-    if (m.type === "joined") { mySeat = m.seat; $("#join").classList.add("hidden");
-      $("#game").classList.remove("hidden"); status("joined room " + m.code); }
+    if (m.type === "joined") {
+      mySeat = m.seat; solo = !!m.solo;
+      $("#join").classList.add("hidden"); $("#game").classList.remove("hidden");
+      if (solo) {
+        $("#deal").textContent = "shuffle";
+        $("#score").classList.remove("hidden"); drawScore();
+        status("solo practice — flip, slap a pattern; misses are revealed");
+        ws.send(JSON.stringify({ type: "deal" }));
+      } else status("joined room " + m.code);
+    }
     else if (m.type === "state") render(m.room);
     else if (m.type === "flip") {
       // Stamp paint time of the new card; the state msg that paints it lands
@@ -120,13 +133,21 @@ $("#joinBtn").onclick = () => {
       requestAnimationFrame(() => { shownAt = performance.now(); });
     }
     else if (m.type === "slap_won") { shownAt = null;
+      if (m.seat === mySeat) { sc.hit++; drawScore(); }
       status(`${m.name} took the pile — ${m.rule}!`, m.seat === mySeat ? "good" : "bad"); }
-    else if (m.type === "burned") status("wrong slap — burned a card", "bad");
+    else if (m.type === "missed") { sc.miss++; drawScore();
+      status(`missed — that was ${m.rule}`, "bad"); }
+    else if (m.type === "burned") { sc.wrong++; drawScore();
+      status("wrong slap — burned a card", "bad"); }
     else if (m.type === "game_over") status(`game over — ${m.name} wins`, "good");
     else if (m.type === "error") status(m.message, "bad");
   };
   ws.onclose = () => status("disconnected", "bad");
-};
+}
+
+$("#joinBtn").onclick = () => connect({
+  name: $("#name").value.trim() || "anon", code: $("#code").value.trim().toUpperCase() });
+$("#soloBtn").onclick = () => connect({ name: $("#name").value.trim() || "anon", solo: true });
 
 $("#mode").onchange = () => ws.send(JSON.stringify({ type: "set_mode", mode: $("#mode").value }));
 $("#deal").onclick = () => ws.send(JSON.stringify({ type: "deal" }));

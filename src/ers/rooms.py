@@ -126,6 +126,7 @@ class Room:
     pile: list[int] = field(default_factory=list)
     turn: int = 0
     started: bool = False
+    solo: bool = False  # practice room: 1 player, no win condition, re-deal freely
     # "reflex": rank slaps by client reaction time (ping-independent, trusts
     # client). "ping": rank by server arrival (first packet wins, no trust).
     mode: str = "reflex"
@@ -237,7 +238,7 @@ class Room:
 
     def winner(self) -> Player | None:
         """Whole-deck winner, or None if the game is still going."""
-        if not self.started:
+        if not self.started or self.solo:  # solo practice never "ends"
             return None
         alive = [p for p in self.players if p.stack]
         return alive[0] if len(alive) == 1 else None

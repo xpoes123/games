@@ -17,7 +17,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.ers.rooms import ROOMS, SLAP_WINDOW_S, Player, Room, make_room
+from src.ers.rooms import ROOMS, SLAP_WINDOW_S, Player, Room, make_room, slap_rule
 
 log = logging.getLogger("ers")
 
@@ -67,10 +67,14 @@ async def _open_slap_window(room: Room) -> None:
 
 async def _handle_flip(room: Room, p: Player) -> None:
     async with room.lock:
+        # Solo practice: flipping past a live (unslapped) pile is a miss.
+        missed = slap_rule(room.pile) if room.solo and not room.window_open else None
         card, err = room.flip(p)
     if err:
         await _send(p, {"type": "error", "message": err})
         return
+    if missed:
+        await _send(p, {"type": "missed", "rule": missed})
     await _broadcast(room, {"type": "flip", "seat": room.seat_of(p), "card": card})
     await _broadcast_state(room)
 
@@ -95,20 +99,24 @@ async def ws(sock: WebSocket) -> None:
         hello = json.loads(await sock.receive_text())
         name = (hello.get("name") or "anon").strip()[:24] or "anon"
         code = (hello.get("code") or "").strip().upper()
+        solo = bool(hello.get("solo"))
     except Exception:
         await sock.close(code=4400, reason="bad hello")
         return
 
-    if code and code in ROOMS:
+    if solo:
+        room = make_room()
+        room.solo = True
+    elif code and code in ROOMS:
         room = ROOMS[code]
     else:
         room = make_room()
-    if room.started:
+    if room.started and not room.solo:
         await sock.close(code=4403, reason="game in progress")
         return
 
     p = room.add(name, sock)
-    await _send(p, {"type": "joined", "code": room.code, "seat": room.seat_of(p)})
+    await _send(p, {"type": "joined", "code": room.code, "seat": room.seat_of(p), "solo": room.solo})
     await _broadcast_state(room)
 
     try:
@@ -121,7 +129,9 @@ async def ws(sock: WebSocket) -> None:
                     await _broadcast_state(room)
             elif action == "deal":
                 async with room.lock:
-                    if not room.started and len(room.players) >= 2:
+                    # Solo can (re)deal anytime with 1 player; multiplayer needs 2.
+                    need = 1 if room.solo else 2
+                    if len(room.players) >= need and (room.solo or not room.started):
                         room.deal()
                 await _broadcast(room, {"type": "dealt"})
                 await _broadcast_state(room)
