@@ -271,6 +271,7 @@ class Room:
             "spans": {r: self.rule_spans.get(r, 0) for r in ALL_RULES},
             "max_span": MAX_SPAN,
             "shot_clock": self.shot_clock,
+            "solo": self.solo,
             "cpu": any(p.is_cpu for p in self.players),
             "cpu_reaction": self.cpu_reaction,
             "turn": self.turn,

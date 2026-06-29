@@ -82,8 +82,9 @@
           <option value="3">3s</option>
           <option value="5">5s</option>
         </select></label>
-      <label id="cpuRow" class="hidden">CPU difficulty
+      <label id="cpuRow" class="hidden">opponent
         <select id="cpu">
+          <option value="0">zen (no CPU)</option>
           <option value="1.4">easy</option>
           <option value="0.8">medium</option>
           <option value="0.45">hard</option>
@@ -159,8 +160,8 @@ function render(room) {
   $("#mode").disabled = room.started && !solo;
   $("#clock").value = String(room.shot_clock || 0);
   $("#clock").disabled = room.started && !solo;
-  $("#cpuRow").classList.toggle("hidden", !room.cpu);
-  if (room.cpu) $("#cpu").value = String(room.cpu_reaction);
+  $("#cpuRow").classList.toggle("hidden", !room.solo);  // shown in solo even at zen
+  $("#cpu").value = room.cpu ? String(room.cpu_reaction) : "0";
   renderRules(room);
 }
 

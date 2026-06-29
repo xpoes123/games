@@ -240,8 +240,26 @@ async def ws(sock: WebSocket) -> None:
             elif action == "set_cpu":
                 r = msg.get("reaction")
                 if isinstance(r, (int, float)) and room.solo:
-                    room.cpu_reaction = max(0.1, min(float(r), 5.0))
-                    await _broadcast_state(room)
+                    had = any(pl.is_cpu for pl in room.players)
+                    want = r > 0  # 0 = zen (no opponent)
+                    if want:
+                        room.cpu_reaction = max(0.1, min(float(r), 5.0))
+                    if want != had:  # CPU added/removed → rebuild and re-deal
+                        if want:
+                            room.add("CPU", None).is_cpu = True
+                        else:
+                            for t in (room.cpu_flip_task, room.cpu_slap_task):
+                                if t:
+                                    t.cancel()
+                            room.cpu_flip_task = room.cpu_slap_task = None
+                            room.players = [pl for pl in room.players if not pl.is_cpu]
+                        async with room.lock:
+                            room.deal()
+                        await _broadcast_state(room)
+                        await _arm_clock(room)
+                        _cpu_after_change(room)
+                    else:
+                        await _broadcast_state(room)
             elif action == "deal":
                 async with room.lock:
                     # Solo can (re)deal anytime with 1 player; multiplayer needs 2.
