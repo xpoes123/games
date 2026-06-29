@@ -22,8 +22,6 @@ from src.ers.rooms import (
     is_slappable, make_room, min_span, slap_rule,
 )
 
-CPU_THINK = 0.6  # delay before the CPU flips on its own turn (so play is watchable)
-
 log = logging.getLogger("ers")
 
 app = FastAPI(title="ers — games.djiang.xyz", docs_url=None, redoc_url=None)
@@ -132,8 +130,9 @@ async def _handle_flip(room: Room, p: Player) -> None:
 # --- CPU opponent (solo practice) ----------------------------------------
 def _cpu_after_change(room: Room) -> None:
     """React to a state change: the CPU slaps a live pile, else flips on its
-    turn. Synchronous — only (re)schedules timers, no awaits, so it can't race
-    the state it just read. Called after every deal / flip / slap resolution."""
+    turn. Both happen after the SAME cpu_reaction delay so the CPU's timing
+    never reveals whether the pile is slappable (no tell). Synchronous — only
+    (re)schedules timers, no awaits. Called after every deal/flip/slap."""
     cpu = next((p for p in room.players if p.is_cpu), None)
     for attr in ("cpu_flip_task", "cpu_slap_task"):
         t = getattr(room, attr)
@@ -150,7 +149,7 @@ def _cpu_after_change(room: Room) -> None:
 
 async def _cpu_flip(room: Room, cpu: Player) -> None:
     try:
-        await asyncio.sleep(CPU_THINK)
+        await asyncio.sleep(room.cpu_reaction)  # same delay as a slap — no tell
     except asyncio.CancelledError:
         return
     room.cpu_flip_task = None
