@@ -73,42 +73,48 @@ def _combos(ranks: list[int]):
     return product(*(card_values(r) for r in ranks))
 
 
-def slap_rule(pile: list[int]) -> str | None:
-    """Which slap rule the top of the pile satisfies, or None.
+def matching_rules(pile: list[int]) -> list[str]:
+    """Every Math-ERS rule the top of the pile satisfies (priority order).
 
-    Single source of truth for Math-ERS. All checks look at the most recent
-    cards (the just-played card must complete the pattern). Aces try both 1
-    and 14, so any value combination that works makes the pile slappable.
-    To add a rule, add a check here.
+    Single source of truth. All checks look at the most recent cards (the
+    just-played card must complete the pattern). Aces try both 1 and 14, so any
+    value combination that works counts. To add a rule, add a check here.
     """
+    out: list[str] = []
     if len(pile) < 2:
-        return None
+        return out
 
     # Sequences: exactly the top 3 cards, in play order. Constant runs count.
     if len(pile) >= 3:
-        for a, b, c in _combos(pile[-3:]):
-            if 2 * b == a + c:          # arithmetic (d may be 0)
-                return "arithmetic"
-        for a, b, c in _combos(pile[-3:]):
-            if b * b == a * c:          # geometric (ratio may be 1)
-                return "geometric"
-        for a, b, c in _combos(pile[-3:]):
-            if a + b == c:              # fibonacci: newest = sum of prev two
-                return "fibonacci"
+        c3 = list(_combos(pile[-3:]))
+        if any(2 * b == a + c for a, b, c in c3):           # arithmetic (d may be 0)
+            out.append("arithmetic")
+        if any(b * b == a * c for a, b, c in c3):           # geometric (ratio may be 1)
+            out.append("geometric")
+        if any((a + b) % 12 == c % 12 for a, b, c in c3):   # fibonacci, mod 12 (wraps)
+            out.append("fibonacci")
 
     # Squares / cubes: concatenate the digits of any top-window of >= 2 cards.
+    sq = cu = False
     for k in range(2, min(CONCAT_MAX, len(pile)) + 1):
         for combo in _combos(pile[-k:]):
             num = int("".join(str(v) for v in combo))
-            if _is_square(num):
-                return "square"
-            if _is_cube(num):
-                return "cube"
-    return None
+            sq = sq or _is_square(num)
+            cu = cu or _is_cube(num)
+    if sq:
+        out.append("square")
+    if cu:
+        out.append("cube")
+    return out
+
+
+def slap_rule(pile: list[int]) -> str | None:
+    rules = matching_rules(pile)
+    return rules[0] if rules else None
 
 
 def is_slappable(pile: list[int]) -> bool:
-    return slap_rule(pile) is not None
+    return bool(matching_rules(pile))
 
 
 @dataclass(eq=False)  # identity hash/eq — players are tracked by object, not value
@@ -281,6 +287,7 @@ def demo() -> None:
     assert slap_rule([2, 4, 8]) == "geometric"  # ratio 2
     assert slap_rule([2, 3, 5]) == "fibonacci"  # 2+3=5
     assert slap_rule([10, 4, 1]) == "fibonacci" # 10+4=14, ace played high
+    assert slap_rule([10, 5, 3]) == "fibonacci" # (10+5) mod 12 = 3, wraps around
     assert slap_rule([11, 1]) == "square"        # J(rank11)=12 + ace=1 → "121" = 11²
     assert slap_rule([12, 1]) is None            # Q(rank12)=11 + ace → "111"/"1114", neither
     assert slap_rule([2, 3]) is None             # "23": not square/cube, <3 for seq
