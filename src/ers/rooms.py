@@ -68,7 +68,7 @@ SEQ_RULES = ("arithmetic", "geometric", "fibonacci")
 
 # Per-rule "span" = minimum number of cards the pattern must cover (the difficulty
 # dial). 0 = rule off. Default = the current balance.
-DEFAULT_SPANS = {"arithmetic": 3, "geometric": 3, "fibonacci": 4, "square": 2, "cube": 2}
+DEFAULT_SPANS = {"arithmetic": 3, "geometric": 3, "fibonacci": 3, "square": 2, "cube": 2}
 
 
 def min_span(rule: str) -> int:
@@ -297,10 +297,10 @@ def demo() -> None:
     assert slap_rule([2, 4, 6]) == "arithmetic" # d=2
     assert slap_rule([5, 5, 5]) == "arithmetic" # constant run counts (d=0)
     assert slap_rule([2, 4, 8]) == "geometric"  # ratio 2
-    assert slap_rule([1, 2, 3, 5]) == "fibonacci"  # default fib span 4: 1,2,3,5
-    assert slap_rule([5, 8, 1, 9]) == "fibonacci"  # 4-term, mod 12 wrap: 5+8≡1, 8+1≡9
-    assert slap_rule([2, 3, 5]) is None            # default fib needs 4 cards
+    assert slap_rule([2, 3, 5]) == "fibonacci"     # default fib span 3: 2+3=5
+    assert slap_rule([5, 8, 1, 9]) == "fibonacci"  # mod 12 wrap on top 3: 8+1≡9
     assert slap_rule([10, 4, 1]) is None           # ace is only 1 now, nothing fires
+    assert slap_rule([2, 3, 5], {"fibonacci": 4}) is None  # crank fib to 4 → too short
 
     # difficulty dial (per-rule span / min cards):
     assert slap_rule([2, 3, 5], {"fibonacci": 3}) == "fibonacci"   # 3-term fib
