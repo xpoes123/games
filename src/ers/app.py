@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from pathlib import Path
 
@@ -18,8 +19,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.ers.rooms import (
-    ALL_RULES, MAX_SPAN, ROOMS, SLAP_WINDOW_S, Player, Room,
-    is_slappable, make_room, min_span, slap_rule,
+    ALL_RULES, CPU_LEVELS, MAX_SPAN, ROOMS, SLAP_WINDOW_S, Player, Room,
+    make_room, min_span, slap_rule,
 )
 
 log = logging.getLogger("ers")
@@ -109,12 +110,20 @@ async def _flip_for(room: Room, p: Player) -> tuple[bool, str | None]:
         # Solo practice: flipping past a live (unslapped) pile is a miss.
         missed = slap_rule(room.pile, room.rule_spans) if room.solo and not room.window_open else None
         seat = room.seat_of(p)
-        card, err = room.flip(p)
+        card, err, event = room.flip(p)
+        end = room.winner() if err is None else None  # game ends when someone runs out
     if err:
         return False, err
     if missed:
         await _send(p, {"type": "missed", "rule": missed})
     await _broadcast(room, {"type": "flip", "seat": seat, "card": card})
+    if event and event[0] == "battle_won":
+        w = event[1]
+        await _broadcast(room, {"type": "battle_won", "seat": room.seat_of(w), "name": w.name})
+    if end is not None:
+        async with room.lock:
+            room.started = False  # stop the shot clock and further flips
+        await _broadcast(room, {"type": "game_over", "name": end.name})
     await _broadcast_state(room)
     await _arm_clock(room)  # turn advanced → restart clock for next player
     _cpu_after_change(room)
@@ -141,15 +150,19 @@ def _cpu_after_change(room: Room) -> None:
             setattr(room, attr, None)
     if not cpu or not room.started:
         return
-    if is_slappable(room.pile, room.rule_spans):
+    if room.cpu_sees(room.pile):  # only patterns within its skill — else it misses
         room.cpu_slap_task = asyncio.create_task(_cpu_slap(room, cpu))
     elif room.turn == room.seat_of(cpu) and cpu.stack:
         room.cpu_flip_task = asyncio.create_task(_cpu_flip(room, cpu))
 
 
+def _cpu_delay(room: Room) -> float:
+    return room.cpu_reaction * random.uniform(0.85, 1.15)  # jitter → not robotic
+
+
 async def _cpu_flip(room: Room, cpu: Player) -> None:
     try:
-        await asyncio.sleep(room.cpu_reaction)  # same delay as a slap — no tell
+        await asyncio.sleep(_cpu_delay(room))  # same distribution as a slap — no tell
     except asyncio.CancelledError:
         return
     room.cpu_flip_task = None
@@ -158,7 +171,7 @@ async def _cpu_flip(room: Room, cpu: Player) -> None:
 
 async def _cpu_slap(room: Room, cpu: Player) -> None:
     try:
-        await asyncio.sleep(room.cpu_reaction)  # difficulty = how fast it reacts
+        await asyncio.sleep(_cpu_delay(room))  # difficulty = how fast it reacts
     except asyncio.CancelledError:
         return
     room.cpu_slap_task = None
@@ -236,13 +249,22 @@ async def ws(sock: WebSocket) -> None:
                     room.shot_clock = 0.0 if sec <= 0 else max(0.5, min(float(sec), 10.0))
                     await _broadcast_state(room)
                     await _arm_clock(room)  # apply now (e.g. solo mid-game toggle)
+            elif action == "set_battle":
+                on = msg.get("on")
+                if isinstance(on, bool) and (room.solo or not room.started):
+                    room.battle_enabled = on
+                    await _broadcast_state(room)
             elif action == "set_cpu":
-                r = msg.get("reaction")
-                if isinstance(r, (int, float)) and room.solo:
+                level = msg.get("level")
+                if isinstance(level, str) and room.solo:
                     had = any(pl.is_cpu for pl in room.players)
-                    want = r > 0  # 0 = zen (no opponent)
+                    want = level in CPU_LEVELS  # "zen"/unknown → no opponent
                     if want:
-                        room.cpu_reaction = max(0.1, min(float(r), 5.0))
+                        cfg = CPU_LEVELS[level]
+                        room.cpu_level = level
+                        room.cpu_reaction = cfg["reaction"]
+                        room.cpu_coverage = cfg["coverage"]
+                        room.cpu_max_digits = cfg["max_digits"]
                     if want != had:  # CPU added/removed → rebuild and re-deal
                         if want:
                             room.add("CPU", None).is_cpu = True

@@ -36,6 +36,26 @@ SLAP_WINDOW_S = 0.20
 # server auto-flips for you. Stops players tanking to scan the pile. Off in solo.
 SHOT_CLOCK_S = 2.0
 
+# A wrong slap landing within this long of your previous slap is forgiven (no
+# burn) — stops an accidental double-tap right after a real slap from costing you.
+SLAP_DEBOUNCE_S = 0.4
+
+# CPU difficulty: reaction = slap/flip delay (s); coverage = how many of the 5
+# patterns it checks per pile (random subset — misses the rest); max_digits =
+# largest square/cube concatenation it can spot. insane ≈ perfect.
+CPU_LEVELS = {
+    "easy":   {"reaction": 1.4,  "coverage": 2, "max_digits": 2},
+    "medium": {"reaction": 0.8,  "coverage": 3, "max_digits": 3},
+    "hard":   {"reaction": 0.5,  "coverage": 4, "max_digits": 4},
+    "insane": {"reaction": 0.28, "coverage": 5, "max_digits": 99},
+}
+
+# Face-card battle (classic ERS, optional): playing a face card forces the next
+# player to answer with their own face card within N flips, else the player who
+# laid it takes the pile. Chances by RANK: Jack(11)=1, Queen(12)=2, King(13)=3,
+# Ace(1)=4 (i.e. shown values 12→1, 11→2, 13→3, 1→4).
+FACE_CHANCES = {11: 1, 12: 2, 13: 3, 1: 4}
+
 # Floor on a believable human reaction. Anything faster is an anticipatory mash
 # or a tampered client — ignored (no win, no penalty). ponytail: this is the
 # only anti-cheat; client reaction times are otherwise trusted, fine for
@@ -87,9 +107,11 @@ def _fib(vs: list[int]) -> bool:    # each card = previous two summed, mod 12
     return all((vs[i - 2] + vs[i - 1]) % 12 == vs[i] % 12 for i in range(2, len(vs)))
 
 
-def matching_rules(pile: list[int], spans: dict = DEFAULT_SPANS) -> list[str]:
+def matching_rules(pile: list[int], spans: dict = DEFAULT_SPANS,
+                   max_digits: int | None = None) -> list[str]:
     """Every rule the top of the pile satisfies, given each rule's span (min
-    cards). Single source of truth. To add a rule, add a check here."""
+    cards). max_digits caps the size of square/cube concatenations considered
+    (used to model a weaker CPU). Single source of truth — add rules here."""
     out: list[str] = []
     if len(pile) < 2:
         return out
@@ -106,7 +128,10 @@ def matching_rules(pile: list[int], spans: dict = DEFAULT_SPANS) -> list[str]:
         n = spans.get(name, 0)
         if n >= 2:
             for k in range(n, min(MAX_SPAN, len(v)) + 1):
-                if test(int("".join(str(x) for x in v[-k:]))):
+                s = "".join(str(x) for x in v[-k:])
+                if max_digits is not None and len(s) > max_digits:
+                    continue
+                if test(int(s)):
                     out.append(name)
                     break
     return out
@@ -117,8 +142,9 @@ def slap_rule(pile: list[int], spans: dict = DEFAULT_SPANS) -> str | None:
     return rules[0] if rules else None
 
 
-def is_slappable(pile: list[int], spans: dict = DEFAULT_SPANS) -> bool:
-    return bool(matching_rules(pile, spans))
+def is_slappable(pile: list[int], spans: dict = DEFAULT_SPANS,
+                 max_digits: int | None = None) -> bool:
+    return bool(matching_rules(pile, spans, max_digits))
 
 
 @dataclass(eq=False)  # identity hash/eq — players are tracked by object, not value
@@ -128,6 +154,7 @@ class Player:
     stack: list[int] = field(default_factory=list)  # face-down; draw from end
     connected: bool = True
     is_cpu: bool = False
+    last_slap: float = 0.0  # monotonic time of this player's last slap (debounce)
 
 
 @dataclass
@@ -138,7 +165,13 @@ class Room:
     turn: int = 0
     started: bool = False
     solo: bool = False  # practice room: 1 human vs a CPU, re-deal freely
-    cpu_reaction: float = 0.8  # CPU's slap reaction time (seconds) = difficulty
+    cpu_level: str = "medium"   # difficulty preset (see CPU_LEVELS)
+    cpu_reaction: float = 0.8   # slap/flip delay, derived from cpu_level
+    cpu_coverage: int = 3       # patterns the CPU checks per pile
+    cpu_max_digits: int = 3     # largest square/cube the CPU can spot
+    battle_enabled: bool = False        # face-card battle rule (off by default)
+    battle_owner: int | None = None     # seat owed the pile if a challenge fails
+    battle_chances: int = 0             # responder's flips left (0 = no battle)
     # Per-rule difficulty: min cards each pattern must span (0 = off). See settings.
     rule_spans: dict = field(default_factory=lambda: dict(DEFAULT_SPANS))
     shot_clock: float = SHOT_CLOCK_S  # seconds to flip before auto-flip; 0 = off
@@ -177,6 +210,8 @@ class Room:
         self.pile = []
         self.turn = 0
         self.started = True
+        self.battle_owner = None
+        self.battle_chances = 0
         self._reset_slaps()
 
     # --- play ----------------------------------------------------------
@@ -193,20 +228,52 @@ class Room:
             if self.players[self.turn].stack:
                 return
 
-    def flip(self, player: Player) -> tuple[int | None, str | None]:
+    def flip(self, player: Player) -> tuple[int | None, str | None, tuple | None]:
+        """Flip the top card. Returns (card, error, event). event is None, or
+        ("battle_won", owner) when a face-card challenge went unanswered."""
         if not self.started:
-            return None, "not started"
+            return None, "not started", None
         seat = self.seat_of(player)
         if seat != self.turn:
-            return None, "not your turn"
+            return None, "not your turn", None
         if not player.stack:
-            return None, "no cards"
+            return None, "no cards", None
         card = player.stack.pop()
         self.pile.append(card)
-        self._advance_turn()
+        if self.battle_enabled:
+            event = self._apply_battle(seat, card)  # handles its own turn logic
+        else:
+            event = None
+            self._advance_turn()
         # New card on top → fresh slap chance for everyone.
         self._reset_slaps()
-        return card, None
+        return card, None, event
+
+    def _apply_battle(self, seat: int, card: int) -> tuple | None:
+        is_face = card in FACE_CHANCES
+        if self.battle_chances > 0:
+            # `player` is answering a challenge.
+            if is_face:                              # reversal: re-challenge opponent
+                self.battle_owner = seat
+                self.battle_chances = FACE_CHANCES[card]
+                self._advance_turn()
+            else:
+                self.battle_chances -= 1
+                if self.battle_chances == 0:         # challenge failed → owner scoops
+                    owner = self.players[self.battle_owner]
+                    owner.stack[:0] = self.pile
+                    self.pile = []
+                    self.turn = self.battle_owner
+                    self.battle_owner = None
+                    return ("battle_won", owner)
+                # else: responder keeps flipping — turn stays put
+        elif is_face:                                # a face card starts a battle
+            self.battle_owner = seat
+            self.battle_chances = FACE_CHANCES[card]
+            self._advance_turn()
+        else:
+            self._advance_turn()                     # normal flip
+        return None
 
     def record_slap(self, player: Player, reaction: float | None, arrival: float) -> str:
         """Register a slap. Returns 'wrong' | 'open' | 'add' | 'ignore'.
@@ -219,7 +286,11 @@ class Room:
         """
         if player in self.locked_out:
             return "ignore"
+        recent = (arrival - player.last_slap) < SLAP_DEBOUNCE_S
+        player.last_slap = arrival
         if not is_slappable(self.pile, self.rule_spans):
+            if recent:
+                return "ignore"  # debounce: accidental double-tap right after a slap
             # Penalty: burn one card to the bottom of the pile, lock out.
             self.locked_out.add(player)
             if player.stack:
@@ -249,10 +320,23 @@ class Room:
         # Pile goes to the bottom of the winner's stack (so it gets played out).
         winner.stack[:0] = self.pile
         self.pile = []
-        # Winner leads the next flip.
+        # Winner leads the next flip; a slap also ends any face-card battle.
         self.turn = self.seat_of(winner)
+        self.battle_owner = None
+        self.battle_chances = 0
         self._reset_slaps()
         return winner
+
+    def cpu_sees(self, pile: list[int]) -> bool:
+        """Whether the CPU spots a slappable pattern: it only checks a random
+        subset (cpu_coverage) of the enabled rules each pile, and can't read
+        squares/cubes bigger than cpu_max_digits — so a weaker CPU misses."""
+        enabled = [r for r in ALL_RULES if self.rule_spans.get(r, 0) >= min_span(r)]
+        if not enabled:
+            return False
+        subset = random.sample(enabled, min(self.cpu_coverage, len(enabled)))
+        sub_spans = {r: self.rule_spans[r] for r in subset}
+        return is_slappable(pile, sub_spans, max_digits=self.cpu_max_digits)
 
     def winner(self) -> Player | None:
         """Whole-deck winner, or None if the game is still going."""
@@ -273,7 +357,12 @@ class Room:
             "shot_clock": self.shot_clock,
             "solo": self.solo,
             "cpu": any(p.is_cpu for p in self.players),
-            "cpu_reaction": self.cpu_reaction,
+            "cpu_level": self.cpu_level,
+            "battle_enabled": self.battle_enabled,
+            "battle": (
+                {"responder": self.turn, "owner": self.battle_owner, "chances": self.battle_chances}
+                if self.battle_chances > 0 else None
+            ),
             "turn": self.turn,
             "pile_count": len(self.pile),
             "pile_top": self.pile[-1] if self.pile else None,
@@ -348,6 +437,43 @@ def demo() -> None:
     r2.pile = [2, 3]  # not slappable
     assert r2.record_slap(r2.players[0], reaction=0.30, arrival=1.0) == "wrong"
     assert r2.pile == [5, 2, 3] and r2.players[0].stack == [5]
+    # ...but a second wrong slap right after (within debounce) is forgiven.
+    assert r2.record_slap(r2.players[0], reaction=0.30, arrival=1.1) == "ignore"
+    assert r2.players[0].stack == [5]  # no extra card burned
+
+    # Face-card battle: Jack(rank 11)=1 chance; unanswered → owner takes pile.
+    rb = Room(code="B", battle_enabled=True, started=True)
+    rb.players = [Player("a", None, stack=[11]), Player("b", None, stack=[5])]
+    card, err, ev = rb.flip(rb.players[0])         # a plays Jack
+    assert card == 11 and rb.battle_chances == 1 and rb.battle_owner == 0 and rb.turn == 1
+    card, err, ev = rb.flip(rb.players[1])         # b answers with a 5 → fails
+    assert ev == ("battle_won", rb.players[0])
+    assert rb.players[0].stack == [11, 5] and rb.pile == [] and rb.battle_chances == 0
+
+    # Reversal: responder plays a face card → re-challenges with its own count.
+    rr = Room(code="BR", battle_enabled=True, started=True)
+    rr.players = [Player("a", None, stack=[3, 11]), Player("b", None, stack=[7, 12])]
+    rr.flip(rr.players[0])                          # Jack (top) → chances 1, owner 0, turn 1
+    _, _, ev = rr.flip(rr.players[1])              # Queen (top) =2 → reversal back to a
+    assert rr.battle_owner == 1 and rr.battle_chances == 2 and rr.turn == 0 and ev is None
+
+    # Battle off (default): a face card is just a normal flip.
+    rn = Room(code="BN", started=True)
+    rn.players = [Player("a", None, stack=[11]), Player("b", None, stack=[5])]
+    _, _, ev = rn.flip(rn.players[0])
+    assert rn.battle_chances == 0 and rn.turn == 1 and ev is None
+
+    # Game ends when a player runs out of cards.
+    rw = Room(code="W", started=True)
+    rw.players = [Player("a", None, stack=[2, 3]), Player("b", None, stack=[])]
+    assert rw.winner() is rw.players[0]
+
+    # CPU perception: insane sees all; easy can't read a 3-digit-only square.
+    ri = Room(code="I", cpu_coverage=5, cpu_max_digits=99)
+    assert ri.cpu_sees([1, 6])                 # "16" = 4², insane sees everything
+    re_ = Room(code="E", cpu_coverage=2, cpu_max_digits=2)
+    assert is_slappable([1, 2, 1])             # "121" = 11² really is slappable
+    assert not re_.cpu_sees([1, 2, 1])         # ...but 3 digits → invisible to easy
     print("ok")
 
 

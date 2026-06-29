@@ -37,6 +37,7 @@
   .hidden { display:none; }
   #clockwrap { height:3px; max-width:300px; margin:0 auto 1.25rem; background:var(--border); }
   #clockbar { height:100%; width:0; background:var(--accent); }
+  #battleMsg { text-align:center; color:var(--bad); font-weight:600; margin:-0.5rem 0 1rem; }
   #settings { margin:1rem 0; border:1px solid var(--border); padding:.5rem .75rem; }
   #settings summary { cursor:pointer; color:var(--accent); }
   #settings > label { margin:.6rem 0 0; }
@@ -65,7 +66,8 @@
 
   <div id="game" class="hidden">
     <div class="row"><strong>room <span id="roomCode"></span></strong>
-      <button id="deal">deal</button></div>
+      <button id="deal">deal</button>
+      <button id="mute"></button></div>
 
     <details id="settings" open>
       <summary>settings</summary>
@@ -84,12 +86,13 @@
         </select></label>
       <label id="cpuRow" class="hidden">opponent
         <select id="cpu">
-          <option value="0">zen (no CPU)</option>
-          <option value="1.4">easy</option>
-          <option value="0.8">medium</option>
-          <option value="0.45">hard</option>
-          <option value="0.28">insane</option>
+          <option value="zen">zen (no CPU)</option>
+          <option value="easy">easy</option>
+          <option value="medium">medium</option>
+          <option value="hard">hard</option>
+          <option value="insane">insane</option>
         </select></label>
+      <label>face-card battle <input type="checkbox" id="battle"></label>
       <div id="ruleToggles"></div>
     </details>
 
@@ -99,6 +102,7 @@
       <div id="pileCount" style="color:var(--muted)"></div>
     </div>
     <div id="clockwrap" class="hidden"><div id="clockbar"></div></div>
+    <div id="battleMsg" class="hidden"></div>
     <div class="row" style="justify-content:center">
       <button id="flip" class="big">flip <span style="color:var(--muted)">(enter)</span></button>
       <button id="slap" class="big">SLAP <span style="opacity:.7">(space)</span></button>
@@ -126,6 +130,32 @@
 const $ = s => document.querySelector(s);
 const VAL = {11:12, 12:11};  // shown value: J=12, Q=11; K=13/A=1/rest are identity
 const SEAT_COLORS = ["#7aa2f7", "#e0af68", "#9ece6a", "#bb9af7", "#f7768e", "#7dcfff"];
+
+// --- synthesized sound effects (WebAudio, no assets) ---
+let audioCtx = null, muted = localStorage.getItem("ers_mute") === "1";
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
+function beep(freq, dur, type = "sine", vol = 0.2, when = 0) {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime + when;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = type; osc.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  osc.connect(g); g.connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + dur);
+}
+const SOUNDS = {
+  flip: () => beep(320, 0.05, "square", 0.07),
+  win:  () => { beep(660, 0.1, "sine", 0.25); beep(990, 0.12, "sine", 0.2, 0.07); },
+  lose: () => beep(200, 0.16, "sawtooth", 0.16),
+  burn: () => beep(130, 0.22, "sawtooth", 0.2),
+  over: () => { [523, 659, 784].forEach((f, i) => beep(f, 0.18, "triangle", 0.2, i * 0.12)); },
+};
+function play(n) { (SOUNDS[n] || (() => {}))(); }
+function drawMute() { $("#mute").textContent = muted ? "sound: off" : "sound: on"; }
 let ws, mySeat = null, solo = false;
 const sc = { hit: 0, miss: 0, wrong: 0 };
 function drawScore() {
@@ -156,6 +186,12 @@ function render(room) {
   show(room.pile_top);
   $("#pileCount").textContent = room.started ? `pile: ${room.pile_count}` : "not dealt";
   $("#clockwrap").classList.toggle("hidden", !room.started || !room.shot_clock);
+  if (room.battle) {
+    const resp = (room.players[room.battle.responder] || {}).name || "?";
+    const v = room.battle.chances;
+    $("#battleMsg").textContent = `battle — ${resp} must answer (${v} ${v === 1 ? "chance" : "chances"} left)`;
+    $("#battleMsg").classList.remove("hidden");
+  } else $("#battleMsg").classList.add("hidden");
   $("#flip").disabled = !room.started || room.turn !== mySeat;
   // Solo: deal acts as "shuffle" and is always available; multiplayer needs 2.
   $("#deal").disabled = solo ? false : (room.started || room.players.length < 2);
@@ -164,7 +200,9 @@ function render(room) {
   $("#clock").value = String(room.shot_clock || 0);
   $("#clock").disabled = room.started && !solo;
   $("#cpuRow").classList.toggle("hidden", !room.solo);  // shown in solo even at zen
-  $("#cpu").value = room.cpu ? String(room.cpu_reaction) : "0";
+  $("#cpu").value = room.cpu ? room.cpu_level : "zen";
+  $("#battle").checked = !!room.battle_enabled;
+  $("#battle").disabled = room.started && !solo;
   renderRules(room);
 }
 
@@ -197,6 +235,7 @@ function status(msg, cls) { $("#status").textContent = msg; $("#status").style.c
   cls === "good" ? "var(--good)" : cls === "bad" ? "var(--bad)" : "var(--muted)"; }
 
 function connect(hello) {
+  initAudio();  // join click is a user gesture → WebAudio is allowed to start
   ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ers/ws");
   ws.onopen = () => ws.send(JSON.stringify({ type: "hello", ...hello }));
   ws.onmessage = ev => {
@@ -213,6 +252,7 @@ function connect(hello) {
     }
     else if (m.type === "state") render(m.room);
     else if (m.type === "flip") {
+      play("flip");
       // Color the card by who played it — makes each play obvious (alternates)
       // and shows whose card is on top.
       $("#card").style.color = SEAT_COLORS[m.seat % SEAT_COLORS.length];
@@ -222,8 +262,12 @@ function connect(hello) {
       requestAnimationFrame(() => { shownAt = performance.now(); });
     }
     else if (m.type === "slap_won") { shownAt = null;
+      play(m.seat === mySeat ? "win" : "lose");
       if (m.seat === mySeat) { sc.hit++; drawScore(); }
       status(`${m.name} took the pile — ${m.rule}!`, m.seat === mySeat ? "good" : "bad"); }
+    else if (m.type === "battle_won") {
+      play(m.seat === mySeat ? "win" : "lose");
+      status(`${m.name} won the battle!`, m.seat === mySeat ? "good" : "bad"); }
     else if (m.type === "clock") {
       // Cosmetic only — the SERVER auto-flips; this bar never gates input.
       // Empty ~150ms early so it's never optimistic relative to the real deadline.
@@ -236,9 +280,9 @@ function connect(hello) {
     }
     else if (m.type === "missed") { sc.miss++; drawScore();
       status(`missed — that was ${m.rule}`, "bad"); }
-    else if (m.type === "burned") { sc.wrong++; drawScore();
+    else if (m.type === "burned") { sc.wrong++; drawScore(); play("burn");
       status("wrong slap — burned a card", "bad"); }
-    else if (m.type === "game_over") status(`game over — ${m.name} wins`, "good");
+    else if (m.type === "game_over") { play("over"); status(`game over — ${m.name} wins`, "good"); }
     else if (m.type === "error") status(m.message, "bad");
   };
   ws.onclose = () => status("disconnected", "bad");
@@ -250,7 +294,10 @@ $("#soloBtn").onclick = () => connect({ name: $("#name").value.trim() || "anon",
 
 $("#mode").onchange = () => ws.send(JSON.stringify({ type: "set_mode", mode: $("#mode").value }));
 $("#clock").onchange = () => ws.send(JSON.stringify({ type: "set_clock", seconds: +$("#clock").value }));
-$("#cpu").onchange = () => ws.send(JSON.stringify({ type: "set_cpu", reaction: +$("#cpu").value }));
+$("#cpu").onchange = () => ws.send(JSON.stringify({ type: "set_cpu", level: $("#cpu").value }));
+$("#battle").onchange = () => ws.send(JSON.stringify({ type: "set_battle", on: $("#battle").checked }));
+$("#mute").onclick = () => { muted = !muted; localStorage.setItem("ers_mute", muted ? "1" : "0"); drawMute(); if (!muted) initAudio(); };
+drawMute();
 $("#deal").onclick = () => ws.send(JSON.stringify({ type: "deal" }));
 $("#flip").onclick = () => { if (!$("#flip").disabled) ws.send(JSON.stringify({ type: "flip" })); };
 $("#slap").onclick = () => slap();
