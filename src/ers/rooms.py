@@ -10,13 +10,11 @@ import asyncio
 import random
 import string
 from dataclasses import dataclass, field
-from itertools import product
 from math import isqrt
 
 # Cards are stored as ranks 1..13. Their MATH VALUE differs (David's variant):
-# A is 1 OR 14 (player's choice — both are tried), J=12, Q=11, K=13, rest face.
-# J/Q swapped vs convention on purpose: 11 triggers too few patterns, so the
-# easier-to-hit value sits on the more common card.
+# Ace=1, J=12, Q=11, K=13, rest face. J/Q swapped vs convention on purpose: 11
+# triggers too few patterns, so the easier-to-hit value sits on the commoner card.
 RANKS = list(range(1, 14))
 
 # Longest run of recent cards a concatenation (square/cube) check will scan.
@@ -24,16 +22,8 @@ RANKS = list(range(1, 14))
 CONCAT_MAX = 4
 
 
-def card_values(rank: int) -> list[int]:
-    if rank == 1:
-        return [1, 14]   # ace low or high
-    if rank == 11:
-        return [12]      # J
-    if rank == 12:
-        return [11]      # Q
-    if rank == 13:
-        return [13]      # K
-    return [rank]
+def value(rank: int) -> int:
+    return {11: 12, 12: 11}.get(rank, rank)  # J=12, Q=11 (swapped); rest = rank
 
 # After the first valid slap lands, the server waits this long before awarding
 # the pile, collecting every other slap that arrives in the meantime. The
@@ -68,39 +58,33 @@ def _is_cube(n: int) -> bool:
     return any(c >= 0 and c ** 3 == n for c in (r - 1, r, r + 1))
 
 
-def _combos(ranks: list[int]):
-    """Every value assignment for these cards, expanding A to its two values."""
-    return product(*(card_values(r) for r in ranks))
-
-
 def matching_rules(pile: list[int]) -> list[str]:
     """Every Math-ERS rule the top of the pile satisfies (priority order).
 
     Single source of truth. All checks look at the most recent cards (the
-    just-played card must complete the pattern). Aces try both 1 and 14, so any
-    value combination that works counts. To add a rule, add a check here.
+    just-played card must complete the pattern). To add a rule, add a check here.
     """
     out: list[str] = []
     if len(pile) < 2:
         return out
+    v = [value(r) for r in pile]
 
     # Sequences: exactly the top 3 cards, in play order. Constant runs count.
     if len(pile) >= 3:
-        c3 = list(_combos(pile[-3:]))
-        if any(2 * b == a + c for a, b, c in c3):           # arithmetic (d may be 0)
+        a, b, c = v[-3], v[-2], v[-1]
+        if 2 * b == a + c:            # arithmetic (d may be 0)
             out.append("arithmetic")
-        if any(b * b == a * c for a, b, c in c3):           # geometric (ratio may be 1)
+        if b * b == a * c:            # geometric (ratio may be 1)
             out.append("geometric")
-        if any((a + b) % 12 == c % 12 for a, b, c in c3):   # fibonacci, mod 12 (wraps)
+        if (a + b) % 12 == c % 12:    # fibonacci, mod 12 (sum wraps around)
             out.append("fibonacci")
 
     # Squares / cubes: concatenate the digits of any top-window of >= 2 cards.
     sq = cu = False
     for k in range(2, min(CONCAT_MAX, len(pile)) + 1):
-        for combo in _combos(pile[-k:]):
-            num = int("".join(str(v) for v in combo))
-            sq = sq or _is_square(num)
-            cu = cu or _is_cube(num)
+        num = int("".join(str(x) for x in v[-k:]))
+        sq = sq or _is_square(num)
+        cu = cu or _is_cube(num)
     if sq:
         out.append("square")
     if cu:
@@ -286,8 +270,9 @@ def demo() -> None:
     assert slap_rule([5, 5, 5]) == "arithmetic" # constant run counts (d=0)
     assert slap_rule([2, 4, 8]) == "geometric"  # ratio 2
     assert slap_rule([2, 3, 5]) == "fibonacci"  # 2+3=5
-    assert slap_rule([10, 4, 1]) == "fibonacci" # 10+4=14, ace played high
     assert slap_rule([10, 5, 3]) == "fibonacci" # (10+5) mod 12 = 3, wraps around
+    assert slap_rule([6, 11, 6]) == "fibonacci" # J=12≡0 mod 12, so 6+J≡6 (the J-as-zero case)
+    assert slap_rule([10, 4, 1]) is None        # ace is only 1 now (no high), nothing fires
     assert slap_rule([11, 1]) == "square"        # J(rank11)=12 + ace=1 → "121" = 11²
     assert slap_rule([12, 1]) is None            # Q(rank12)=11 + ace → "111"/"1114", neither
     assert slap_rule([2, 3]) is None             # "23": not square/cube, <3 for seq
