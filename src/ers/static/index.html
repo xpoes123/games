@@ -35,6 +35,13 @@
   #slap { background:var(--bad); border-color:var(--bad); color:#1a1b26; font-weight:700; }
   #status { color:var(--muted); min-height:1.4em; margin-top:1rem; }
   .hidden { display:none; }
+  #rules { margin-top:1.5rem; border:1px solid var(--border); padding:.5rem .75rem; }
+  #rules summary { cursor:pointer; color:var(--accent); }
+  #rules p { color:var(--muted); margin:.6rem 0; }
+  #rules .vals em { color:var(--fg); font-style:normal; }
+  #rules ul { list-style:none; padding:0; margin:.5rem 0 0; display:grid; gap:.4rem; }
+  #rules li { color:var(--muted); }
+  #rules li b { color:var(--fg); }
 </style>
 </head>
 <body>
@@ -67,6 +74,21 @@
     </div>
     <div id="status"></div>
     <div id="score" class="hidden" style="color:var(--muted); margin-top:.5rem"></div>
+
+    <details id="rules">
+      <summary>rules</summary>
+      <p>Slap the pile the instant the top cards match a pattern. Fastest correct
+      slap takes the pile; a wrong slap burns a card to the bottom.</p>
+      <p class="vals">Card values — A = 1 <em>or</em> 14 · J = 12 · Q = 11 · K = 13 · rest face value.
+      A pattern counts if <em>any</em> value choice works.</p>
+      <ul>
+        <li><b>square</b> — digits of the last 2+ cards concatenate to a perfect square (≥2 digits). J,A → "121" = 11²</li>
+        <li><b>cube</b> — same, a perfect cube. 2,7 → "27" = 3³</li>
+        <li><b>arithmetic</b> — top 3 are an arithmetic sequence, either direction. 2,4,6 · 5,5,5</li>
+        <li><b>geometric</b> — top 3 are a geometric sequence. 2,4,8</li>
+        <li><b>fibonacci (mod 12)</b> — top two sum to the third, wrapping at 12. 2,3,5 · 10,5,3</li>
+      </ul>
+    </details>
   </div>
 </main>
 
