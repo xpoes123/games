@@ -170,8 +170,8 @@ async def me(request: Request):
 
 
 @router.get("/api/leaderboard")
-async def api_leaderboard(game: str = "", limit: int = 25):
-    return {"leaderboard": store.leaderboard(game or None, limit=limit)}
+async def api_leaderboard(game: str = "", limit: int = 25, sort: str = "wins"):
+    return {"leaderboard": store.leaderboard(game or None, limit=limit, sort=sort)}
 
 
 @router.get("/api/profile")

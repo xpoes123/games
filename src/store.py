@@ -78,12 +78,16 @@ def _ensure_schema() -> None:
               mode       TEXT NOT NULL,
               opponent   TEXT,
               duration_s REAL,
+              score      REAL,
               created_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS games_game_idx ON games(game);
             CREATE INDEX IF NOT EXISTS games_guest_idx ON games(guest_id);
             """
         )
+        # Migration for DBs created before `score` existed.
+        if "score" not in {r[1] for r in c.execute("PRAGMA table_info(games)")}:
+            c.execute("ALTER TABLE games ADD COLUMN score REAL")
 
 
 # --- writes ---------------------------------------------------------------
@@ -108,12 +112,13 @@ def link_guest(guest_id: str, discord_id: str) -> None:
 
 
 def record_game(game: str, guest_id: str, name: str, won: bool, mode: str,
-                opponent: str | None = None, duration_s: float | None = None) -> None:
+                opponent: str | None = None, duration_s: float | None = None,
+                score: float | None = None) -> None:
     with _cur() as c:
         c.execute(
-            "INSERT INTO games (game, guest_id, name, won, mode, opponent, duration_s, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (game, guest_id, name, int(won), mode, opponent, duration_s, int(time.time())),
+            "INSERT INTO games (game, guest_id, name, won, mode, opponent, duration_s, score, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (game, guest_id, name, int(won), mode, opponent, duration_s, score, int(time.time())),
         )
 
 
@@ -133,13 +138,16 @@ def _aggregate(game: str | None):
     for r in rows:
         owner = _owner_of(r["guest_id"], links)
         s = stats.setdefault(owner, {
-            "owner": owner, "wins": 0, "games": 0, "hardest": None,
+            "owner": owner, "wins": 0, "games": 0, "hardest": None, "best_score": None,
             "fastest_win": None, "name": r["name"], "last": 0, "is_account": owner in accounts,
         })
         s["games"] += 1
         if r["created_at"] >= s["last"]:
             s["last"] = r["created_at"]
             s["name"] = r["name"]  # most recent guest name
+        sc = r["score"] if "score" in r.keys() else None
+        if sc is not None and (s["best_score"] is None or sc > s["best_score"]):
+            s["best_score"] = sc
         if r["won"]:
             s["wins"] += 1
             if r["mode"] == "cpu" and r["opponent"] in _DIFF_RANK:
@@ -155,14 +163,13 @@ def _aggregate(game: str | None):
     return stats
 
 
-def leaderboard(game: str | None = None, limit: int = 25) -> list[dict]:
+def leaderboard(game: str | None = None, limit: int = 25, sort: str = "wins") -> list[dict]:
     stats = _aggregate(game)
-    ranked = sorted(
-        stats.values(),
-        key=lambda s: (_DIFF_RANK.get(s["hardest"], 0), s["wins"], -(s["fastest_win"] or 1e9)),
-        reverse=True,
-    )
-    return ranked[:limit]
+    if sort == "score":  # score-attack games (e.g. zetamac) rank by best score
+        key = lambda s: (s["best_score"] if s["best_score"] is not None else -1, s["wins"])
+    else:
+        key = lambda s: (_DIFF_RANK.get(s["hardest"], 0), s["wins"], -(s["fastest_win"] or 1e9))
+    return sorted(stats.values(), key=key, reverse=True)[:limit]
 
 
 def profile(guest_id: str, game: str | None = None) -> dict:

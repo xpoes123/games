@@ -13,6 +13,8 @@ from src.bridge.app import app as bridge_app
 from src.chess import persistence as chess_persistence
 from src.chess.app import app as chess_app
 from src.ers.app import app as ers_app
+from src.math24.app import app as math24_app
+from src.zetamac.app import app as zetamac_app
 from src.config import settings
 
 # Wire persistence at import time so schemas are ready before the first request.
@@ -87,6 +89,14 @@ LANDING_HTML = """<!doctype html>
         <div class="name">math ers</div>
         <div class="blurb">2–6 player slap game; latency-fair slap resolution</div>
       </a></li>
+      <li><a href="/math24/">
+        <div class="name">math 24</div>
+        <div class="blurb">race to make 24 from four numbers with + − × ÷</div>
+      </a></li>
+      <li><a href="/zetamac/">
+        <div class="name">zetamac race</div>
+        <div class="blurb">90s head-to-head arithmetic speed drill</div>
+      </a></li>
     </ul>
   </main>
   <script>
@@ -122,10 +132,22 @@ async def ers_slash() -> RedirectResponse:
     return RedirectResponse("/ers/", status_code=307)
 
 
+@app.get("/math24")
+async def math24_slash() -> RedirectResponse:
+    return RedirectResponse("/math24/", status_code=307)
+
+
+@app.get("/zetamac")
+async def zetamac_slash() -> RedirectResponse:
+    return RedirectResponse("/zetamac/", status_code=307)
+
+
 # Each game is its own sub-app — isolated state, isolated WS endpoints.
 app.mount("/bridge", bridge_app)
 app.mount("/chess", chess_app)
 app.mount("/ers", ers_app)
+app.mount("/math24", math24_app)
+app.mount("/zetamac", zetamac_app)
 
 
 def main() -> None:

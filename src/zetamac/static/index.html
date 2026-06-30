@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>zetamac race</title>
+<style>
+  :root { color-scheme: dark; --bg:#1a1b26; --fg:#c0caf5; --muted:#565f89;
+          --border:#414868; --accent:#7aa2f7; --panel:#24283b; --good:#9ece6a; --bad:#f7768e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         background:var(--bg); color:var(--fg); font-size:14px; }
+  main { max-width:560px; margin:0 auto; padding:2rem 1.25rem; }
+  h1 { font-size:1.3rem; font-weight:600; margin:0 0 1.25rem; }
+  input, button { font:inherit; }
+  input { background:var(--panel); border:1px solid var(--border); color:var(--fg); padding:.5rem .6rem; }
+  button { background:var(--panel); border:1px solid var(--border); color:var(--fg); padding:.5rem .9rem; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+  button:disabled { opacity:.4; cursor:default; }
+  .row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+  .hidden { display:none; }
+  #auth { text-align:right; min-height:1.4em; color:var(--muted); }
+  #auth a { color:var(--accent); }
+  #timer { text-align:center; font-size:1.1rem; color:var(--muted); margin:.5rem 0; }
+  #problem { text-align:center; font-size:3rem; font-weight:700; min-height:4rem; margin:1.5rem 0 1rem; }
+  #answer { width:100%; font-size:2rem; text-align:center; }
+  #answer.flash { border-color:var(--good); }
+  #players { list-style:none; padding:0; margin:1.25rem 0; display:grid; gap:.4rem; }
+  #players li { padding:.5rem .75rem; background:var(--panel); border:1px solid var(--border);
+                display:flex; justify-content:space-between; }
+  #players li.me { border-color:var(--accent); }
+  #status { min-height:1.4em; margin-top:1rem; color:var(--muted); }
+  details { margin-top:1rem; border:1px solid var(--border); padding:.5rem .75rem; }
+  summary { cursor:pointer; color:var(--accent); }
+  #boardList { margin:.6rem 0 0; padding-left:1.5rem; }
+  #boardList .meta { color:var(--muted); }
+  #pb { color:var(--muted); margin-top:1rem; }
+</style>
+</head>
+<body>
+<main>
+  <div id="auth"></div>
+  <h1>zetamac race</h1>
+
+  <div id="join" class="row">
+    <input id="name" placeholder="name" maxlength="24" />
+    <input id="code" placeholder="room code (blank = new)" maxlength="4" style="width:11ch" />
+    <button id="joinBtn">join</button>
+  </div>
+
+  <div id="game" class="hidden">
+    <div class="row"><strong>room <span id="roomCode"></span></strong>
+      <span style="color:var(--muted)">share the code; 90s, most correct wins</span></div>
+    <div id="timer">ready</div>
+    <div id="problem">—</div>
+    <input id="answer" inputmode="numeric" autocomplete="off" disabled />
+    <div class="row" style="justify-content:center; margin-top:.75rem">
+      <button id="start">start race</button>
+    </div>
+    <div id="status"></div>
+    <ul id="players"></ul>
+    <div id="pb"></div>
+    <details id="board"><summary>leaderboard (high scores)</summary><ol id="boardList"></ol></details>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let ws, myName = "", endAt = 0, ticker = null;
+
+function status(msg, cls) { $("#status").textContent = msg; $("#status").style.color =
+  cls === "good" ? "var(--good)" : cls === "bad" ? "var(--bad)" : "var(--muted)"; }
+
+function renderScores(s) {
+  $("#players").innerHTML = "";
+  s.players.forEach(p => { const li = document.createElement("li");
+    if (p.name === myName) li.className = "me";
+    li.innerHTML = `<span>${p.name}</span><span>${p.score}</span>`; $("#players").appendChild(li); });
+  $("#start").disabled = s.started;
+}
+
+function tick() {
+  const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+  $("#timer").textContent = left + "s";
+  if (left <= 0 && ticker) { clearInterval(ticker); ticker = null; }
+}
+
+async function fetchAuth() {
+  try { const m = await (await fetch("/auth/me")).json(); const el = $("#auth");
+    if (m.authenticated) el.innerHTML = `${m.user.username} · <a href="/auth/logout">logout</a>`;
+    else if (m.oauth) el.innerHTML = `<a href="/auth/discord/login">login with Discord</a>`;
+    else el.textContent = "playing as guest"; } catch {}
+}
+async function fetchBoards() {
+  try {
+    const lb = (await (await fetch("/api/leaderboard?game=zetamac&sort=score")).json()).leaderboard || [];
+    const ol = $("#boardList"); ol.innerHTML = lb.length ? "" : '<li class="meta">no races yet</li>';
+    lb.forEach(e => { const li = document.createElement("li");
+      li.innerHTML = `${e.name}${e.is_account ? "" : " (guest)"} <span class="meta">— best ${e.best_score ?? 0}</span>`;
+      ol.appendChild(li); });
+    const prof = (await (await fetch("/api/profile?game=zetamac")).json()).profile;
+    $("#pb").textContent = (prof && prof.games) ? `your best — ${prof.best_score ?? 0} · ${prof.wins} race wins` : "";
+  } catch {}
+}
+
+$("#joinBtn").onclick = () => {
+  myName = $("#name").value.trim() || "anon";
+  const code = $("#code").value.trim().toUpperCase();
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/zetamac/ws");
+  ws.onopen = () => ws.send(JSON.stringify({ type: "hello", name: myName, code }));
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "joined") { $("#join").classList.add("hidden"); $("#game").classList.remove("hidden"); fetchBoards(); }
+    else if (m.type === "scores") renderScores(m);
+    else if (m.type === "go") {
+      endAt = Date.now() + m.duration * 1000;
+      $("#answer").disabled = false; $("#answer").value = ""; $("#answer").focus();
+      status(""); if (ticker) clearInterval(ticker); ticker = setInterval(tick, 200); tick();
+    }
+    else if (m.type === "problem") { $("#problem").textContent = m.text || "done!"; $("#answer").value = "";
+      $("#answer").classList.add("flash"); setTimeout(() => $("#answer").classList.remove("flash"), 80); }
+    else if (m.type === "over") {
+      $("#answer").disabled = true; $("#problem").textContent = "—"; $("#timer").textContent = "0s";
+      if (ticker) { clearInterval(ticker); ticker = null; }
+      status(m.winner ? `time! winner: ${m.winner}` : "time!", "good");
+      fetchBoards();
+    }
+  };
+  ws.onclose = () => status("disconnected", "bad");
+};
+
+$("#start").onclick = () => ws.send(JSON.stringify({ type: "start" }));
+// Send on each keystroke — the server advances the instant it matches (zetamac feel).
+$("#answer").addEventListener("input", () => {
+  const v = $("#answer").value.trim();
+  if (v && /^-?\d+$/.test(v)) ws.send(JSON.stringify({ type: "answer", value: v }));
+});
+fetchAuth();
+</script>
+</body>
+</html>
