@@ -40,6 +40,10 @@ SHOT_CLOCK_S = 3.0
 # burn) — stops an accidental double-tap right after a real slap from costing you.
 SLAP_DEBOUNCE_S = 0.4
 
+# A wrong slap within this long of a pile being WON is forgiven too: you were
+# racing for the real pattern and someone else just cleared it — not your fault.
+SLAP_GRACE_S = 0.5
+
 # CPU difficulty modelled like a human scanning the pile:
 #   base       — reaction latency once it spots the pattern (s)
 #   per_cat    — extra time per category it has to hunt through (random order)
@@ -193,6 +197,7 @@ class Room:
     locked_out: set = field(default_factory=set)  # wrong-slapped this pile
     window_open: bool = False
     pending_rule: str | None = None  # which rule the live slap window is on
+    last_resolve: float = 0.0  # monotonic time the last pile was won (slap grace)
     clock_task: object = field(default=None, repr=False, compare=False)   # shot-clock timer
     cpu_flip_task: object = field(default=None, repr=False, compare=False)
     cpu_slap_task: object = field(default=None, repr=False, compare=False)
@@ -299,8 +304,8 @@ class Room:
         recent = (arrival - player.last_slap) < SLAP_DEBOUNCE_S
         player.last_slap = arrival
         if not is_slappable(self.pile, self.rule_spans):
-            if recent:
-                return "ignore"  # debounce: accidental double-tap right after a slap
+            if recent or (arrival - self.last_resolve) < SLAP_GRACE_S:
+                return "ignore"  # double-tap, or racing a pile someone just won
             # Escalating penalty: 1st wrong burns 1, next 2, next 3, ... so
             # spamming slaps tears through your stack. Resets on a correct slap.
             player.wrong_streak += 1
@@ -374,11 +379,18 @@ class Room:
         return random.uniform(lo, hi)
 
     def winner(self) -> Player | None:
-        """Whole-deck winner, or None if the game is still going."""
-        if not self.started or len(self.players) < 2:
+        """The player holding ALL the cards, or None. Game ends only once every
+        card is in one hand (the pile is empty) — emptying your hand doesn't end
+        it; you can still slap a live pile back."""
+        if not self.started or len(self.players) < 2 or self.pile:
             return None
         alive = [p for p in self.players if p.stack]
         return alive[0] if len(alive) == 1 else None
+
+    def exhausted(self) -> bool:
+        """Degenerate stall: every hand is empty (all cards sit in the pile with
+        nobody to play or claim them) — ends the game as a draw."""
+        return self.started and all(not p.stack for p in self.players)
 
     # --- views ---------------------------------------------------------
     def public_state(self) -> dict:
@@ -511,10 +523,24 @@ def demo() -> None:
     _, _, ev = rn.flip(rn.players[0])
     assert rn.battle_chances == 0 and rn.turn == 1 and ev is None
 
-    # Game ends when a player runs out of cards.
+    # Game ends only when one hand holds ALL cards (pile empty), not on run-out.
     rw = Room(code="W", started=True)
     rw.players = [Player("a", None, stack=[2, 3]), Player("b", None, stack=[])]
+    rw.pile = [5]                       # a card still live → b could slap back
+    assert rw.winner() is None
+    rw.pile = []                        # everything now in a's hand → a wins
     assert rw.winner() is rw.players[0]
+    rw.players[0].stack = []            # all hands empty, cards stuck in pile
+    rw.pile = [5, 6]
+    assert rw.winner() is None and rw.exhausted()
+
+    # Slap grace: a wrong slap just after a pile was won is forgiven.
+    rg = Room(code="G")
+    rg.players = [Player("a", None, stack=[9, 9])]
+    rg.pile = [2, 3]                    # not slappable
+    rg.last_resolve = 1.0
+    assert rg.record_slap(rg.players[0], 0.3, 1.2) == "ignore"  # within grace → no burn
+    assert rg.players[0].stack == [9, 9]
 
     # CPU perception: insane always spots a slappable pile (and fast); easy
     # can't read a 3-digit-only square no matter the scan order.

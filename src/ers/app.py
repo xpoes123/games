@@ -77,6 +77,7 @@ async def _open_slap_window(room: Room) -> None:
         winner = room.resolve_slaps()
         if winner is None:
             return
+        room.last_resolve = time.monotonic()  # grace window for late racers
         seat = room.seat_of(winner)
         end = room.winner()
     await _broadcast(room, {
@@ -128,7 +129,8 @@ async def _flip_for(room: Room, p: Player) -> tuple[bool, str | None]:
         missed = slap_rule(room.pile, room.rule_spans) if room.solo and not room.window_open else None
         seat = room.seat_of(p)
         card, err, event = room.flip(p)
-        end = room.winner() if err is None else None  # game ends when someone runs out
+        end = room.winner() if err is None else None  # one hand holds everything
+        draw = end is None and err is None and room.exhausted()
     if err:
         return False, err
     if missed:
@@ -137,11 +139,14 @@ async def _flip_for(room: Room, p: Player) -> tuple[bool, str | None]:
     if event and event[0] == "battle_won":
         w = event[1]
         await _broadcast(room, {"type": "battle_won", "seat": room.seat_of(w), "name": w.name})
-    if end is not None:
+    if end is not None or draw:
         async with room.lock:
             room.started = False  # stop the shot clock and further flips
-        _record_result(room, end)
-        await _broadcast(room, {"type": "game_over", "name": end.name})
+        if end is not None:
+            _record_result(room, end)
+            await _broadcast(room, {"type": "game_over", "name": end.name})
+        else:
+            await _broadcast(room, {"type": "game_over", "name": None, "draw": True})
     await _broadcast_state(room)
     await _arm_clock(room)  # turn advanced → restart clock for next player
     _cpu_after_change(room)

@@ -335,7 +335,7 @@ function connect(hello) {
       const n = m.count || 1;
       status(`wrong slap — burned ${n} card${n === 1 ? "" : "s"}`, "bad"); }
     else if (m.type === "game_over") { play("over");
-      status(`game over — ${m.name} wins`, "good");
+      status(m.draw ? "game over — draw (all cards stuck)" : `game over — ${m.name} wins`, "good");
       $("#replay").classList.remove("hidden");
       fetchBoards(); fetchAuth(); }
     else if (m.type === "error") status(m.message, "bad");
