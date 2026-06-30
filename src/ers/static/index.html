@@ -132,7 +132,7 @@
         <li><b>cube</b> — same, a perfect cube. 2,7 → "27" = 3³</li>
         <li><b>arithmetic</b> — top 3 are an arithmetic sequence, either direction. 2,4,6 · 5,5,5</li>
         <li><b>geometric</b> — top 3 are a geometric sequence. 2,4,8</li>
-        <li><b>fibonacci (mod 12)</b> — each card is the previous two summed (wrapping at 12); run length set in settings. 2,3,5</li>
+        <li><b>fibonacci (mod 13)</b> — each card is the previous two summed (wrapping at 13); run length set in settings. 2,3,5</li>
       </ul>
     </details>
 
@@ -334,10 +334,13 @@ function connect(hello) {
     else if (m.type === "burned") { sc.wrong++; drawScore(); play("burn");
       const n = m.count || 1;
       status(`wrong slap — burned ${n} card${n === 1 ? "" : "s"}`, "bad"); }
+    else if (m.type === "locked") { sc.wrong++; drawScore(); play("burn");
+      status("no cards — buzzing locks you out briefly", "bad"); }
     else if (m.type === "game_over") { play("over");
       status(m.draw ? "game over — draw (all cards stuck)" : `game over — ${m.name} wins`, "good");
       $("#replay").classList.remove("hidden");
       fetchBoards(); fetchAuth(); }
+    else if (m.type === "dealt") { $("#replay").classList.add("hidden"); status(""); }
     else if (m.type === "error") status(m.message, "bad");
   };
   ws.onclose = () => status("disconnected", "bad");
@@ -352,7 +355,8 @@ $("#clock").onchange = () => ws.send(JSON.stringify({ type: "set_clock", seconds
 $("#cpu").onchange = () => ws.send(JSON.stringify({ type: "set_cpu", level: $("#cpu").value }));
 $("#battle").onchange = () => ws.send(JSON.stringify({ type: "set_battle", on: $("#battle").checked }));
 $("#mute").onclick = () => { muted = !muted; localStorage.setItem("ers_mute", muted ? "1" : "0"); drawMute(); if (!muted) initAudio(); };
-$("#replay").onclick = () => { $("#replay").classList.add("hidden"); ws.send(JSON.stringify({ type: "deal" })); };
+function replay() { $("#replay").classList.add("hidden"); status(""); ws.send(JSON.stringify({ type: "deal" })); }
+$("#replay").onclick = replay;
 fetchAuth();
 drawMute();
 $("#deal").onclick = () => ws.send(JSON.stringify({ type: "deal" }));
@@ -361,6 +365,10 @@ $("#slap").onclick = () => slap();
 
 document.addEventListener("keydown", e => {
   if ($("#game").classList.contains("hidden") || e.repeat) return;
+  // Game over → Enter or Space starts a new game.
+  if (!$("#replay").classList.contains("hidden") && (e.code === "Enter" || e.code === "Space")) {
+    e.preventDefault(); replay(); return;
+  }
   if (e.code === "Space") { e.preventDefault(); slap(); }
   else if (e.code === "Enter" && !$("#flip").disabled) ws.send(JSON.stringify({ type: "flip" }));
 });

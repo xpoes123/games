@@ -210,10 +210,12 @@ async def _cpu_slap(room: Room, cpu: Player, delay: float) -> None:
 async def _process_slap(room: Room, p: Player, reaction: float | None, arrival: float) -> None:
     async with room.lock:
         result = room.record_slap(p, reaction, arrival)
-        burned = p.wrong_streak
+        burned = p.last_burn
     if result == "wrong":
         await _send(p, {"type": "burned", "count": burned})  # no-op for CPU
         await _broadcast_state(room)
+    elif result == "locked":
+        await _send(p, {"type": "locked"})  # buzzed with no cards → timed out
     elif result == "open":
         asyncio.create_task(_open_slap_window(room))
 

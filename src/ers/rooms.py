@@ -44,6 +44,10 @@ SLAP_DEBOUNCE_S = 0.4
 # racing for the real pattern and someone else just cleared it — not your fault.
 SLAP_GRACE_S = 0.5
 
+# Buzzing while you have no cards (nothing to burn) locks you out this long —
+# otherwise being out is risk-free spamming to slap back in.
+PENALTY_LOCKOUT_S = 2.5
+
 # CPU difficulty modelled like a human scanning the pile:
 #   base       — reaction latency once it spots the pattern (s)
 #   per_cat    — extra time per category it has to hunt through (random order)
@@ -115,8 +119,8 @@ def _geom(vs: list[int]) -> bool:   # constant ratio (every consecutive triple)
     return all(vs[i] * vs[i] == vs[i - 1] * vs[i + 1] for i in range(1, len(vs) - 1))
 
 
-def _fib(vs: list[int]) -> bool:    # each card = previous two summed, mod 12
-    return all((vs[i - 2] + vs[i - 1]) % 12 == vs[i] % 12 for i in range(2, len(vs)))
+def _fib(vs: list[int]) -> bool:    # each card = previous two summed, mod 13
+    return all((vs[i - 2] + vs[i - 1]) % 13 == vs[i] % 13 for i in range(2, len(vs)))
 
 
 def matching_rules(pile: list[int], spans: dict = DEFAULT_SPANS,
@@ -168,6 +172,8 @@ class Player:
     is_cpu: bool = False
     last_slap: float = 0.0  # monotonic time of this player's last slap (debounce)
     wrong_streak: int = 0   # consecutive wrong slaps → escalating burn (1,2,3,...)
+    last_burn: int = 0      # cards burned by the most recent wrong slap (for UI)
+    locked_until: float = 0.0  # buzzing with no cards locks you out until this time
     guest_id: str = ""      # cookie identity (for saving games / leaderboards)
     discord_id: str = ""    # set when logged in
 
@@ -220,6 +226,9 @@ class Room:
         for p in self.players:
             p.stack = []
             p.wrong_streak = 0
+            p.last_burn = 0
+            p.locked_until = 0.0
+        self.last_resolve = 0.0
         for i, card in enumerate(deck):
             self.players[i % len(self.players)].stack.append(card)
         self.pile = []
@@ -299,7 +308,7 @@ class Room:
         Lower wins either way. 'open' means this slap started the resolution
         window (caller schedules resolve() after SLAP_WINDOW_S).
         """
-        if player in self.locked_out:
+        if player in self.locked_out or arrival < player.locked_until:
             return "ignore"
         recent = (arrival - player.last_slap) < SLAP_DEBOUNCE_S
         player.last_slap = arrival
@@ -309,10 +318,15 @@ class Room:
             # Escalating penalty: 1st wrong burns 1, next 2, next 3, ... so
             # spamming slaps tears through your stack. Resets on a correct slap.
             player.wrong_streak += 1
-            for _ in range(player.wrong_streak):
-                if player.stack:
-                    self.pile.insert(0, player.stack.pop())
+            burned = 0
+            while burned < player.wrong_streak and player.stack:
+                self.pile.insert(0, player.stack.pop())
+                burned += 1
+            player.last_burn = burned
             self.locked_out.add(player)
+            if burned == 0:  # out of cards → nothing to burn, so time them out
+                player.locked_until = arrival + PENALTY_LOCKOUT_S
+                return "locked"
             return "wrong"
         if self.mode == "reflex":
             if reaction is None or reaction < MIN_HUMAN_S:
@@ -441,8 +455,8 @@ def demo() -> None:
     assert slap_rule([5, 5, 5]) == "arithmetic" # constant run counts (d=0)
     assert slap_rule([2, 4, 8]) == "geometric"  # ratio 2
     assert slap_rule([2, 3, 5]) == "fibonacci"     # default fib span 3: 2+3=5
-    assert slap_rule([5, 8, 1, 9]) == "fibonacci"  # mod 12 wrap on top 3: 8+1≡9
-    assert slap_rule([10, 4, 1]) is None           # ace is only 1 now, nothing fires
+    assert slap_rule([5, 8, 13]) == "fibonacci"    # 5+8=13 (King)
+    assert slap_rule([10, 4, 1]) == "fibonacci"    # (10+4) mod 13 = 1 = ace, wraps
     assert slap_rule([2, 3, 5], {"fibonacci": 4}) is None  # crank fib to 4 → too short
 
     # difficulty dial (per-rule span / min cards):
@@ -541,6 +555,15 @@ def demo() -> None:
     rg.last_resolve = 1.0
     assert rg.record_slap(rg.players[0], 0.3, 1.2) == "ignore"  # within grace → no burn
     assert rg.players[0].stack == [9, 9]
+
+    # Buzzing with no cards → timed lockout instead of a (free) wrong slap.
+    rl = Room(code="L")
+    rl.players = [Player("a", None, stack=[])]
+    rl.pile = [2, 3]                    # not slappable, player has no cards
+    assert rl.record_slap(rl.players[0], 0.3, 10.0) == "locked"
+    assert rl.players[0].locked_until > 10.0
+    rl._reset_slaps()                  # new pile, but still locked out by time
+    assert rl.record_slap(rl.players[0], 0.3, 10.5) == "ignore"
 
     # CPU perception: insane always spots a slappable pile (and fast); easy
     # can't read a 3-digit-only square no matter the scan order.
