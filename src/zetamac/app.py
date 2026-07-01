@@ -25,8 +25,15 @@ app = FastAPI(title="zetamac — games.djiang.xyz", docs_url=None, redoc_url=Non
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-DURATION_S = 90
-_N_PROBLEMS = 600  # plenty for the fastest player in DURATION_S
+_N_PROBLEMS = 600  # plenty for the fastest player in a race
+_DURATIONS = (30, 60, 90, 120)
+DEFAULT_CFG = {
+    "ops": ["add", "sub", "mul", "div"],
+    "add_min": 2, "add_max": 100,        # both addends (subtraction is the inverse)
+    "mul_a_min": 2, "mul_a_max": 12,     # first factor (division is the inverse)
+    "mul_b_min": 2, "mul_b_max": 100,    # second factor
+    "duration": 90,
+}
 
 
 @app.get("/")
@@ -34,24 +41,49 @@ async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
-def _problem(rng: random.Random) -> tuple[str, int]:
-    kind = rng.choice(("add", "sub", "mul", "div"))
-    if kind == "add":
-        a, b = rng.randint(2, 100), rng.randint(2, 100)
-        return f"{a} + {b}", a + b
-    if kind == "sub":
-        a, b = rng.randint(2, 100), rng.randint(2, 100)
-        return f"{a + b} − {b}", a            # inverse of addition
+def _problem(rng: random.Random, cfg: dict) -> tuple[str, int]:
+    kind = rng.choice(cfg["ops"])
+    if kind in ("add", "sub"):
+        a = rng.randint(cfg["add_min"], cfg["add_max"])
+        b = rng.randint(cfg["add_min"], cfg["add_max"])
+        if kind == "add":
+            return f"{a} + {b}", a + b
+        return f"{a + b} − {b}", a                    # inverse of addition
+    a = rng.randint(cfg["mul_a_min"], cfg["mul_a_max"])
+    b = rng.randint(cfg["mul_b_min"], cfg["mul_b_max"])
     if kind == "mul":
-        a, b = rng.randint(2, 12), rng.randint(2, 100)
         return f"{a} × {b}", a * b
-    a, b = rng.randint(2, 12), rng.randint(2, 100)
-    return f"{a * b} ÷ {b}", a                 # inverse of multiplication
+    return f"{a * b} ÷ {b}", a                        # inverse of multiplication
 
 
-def make_stream(n: int = _N_PROBLEMS) -> list[tuple[str, int]]:
+def make_stream(cfg: dict = DEFAULT_CFG, n: int = _N_PROBLEMS) -> list[tuple[str, int]]:
     rng = random.Random()
-    return [_problem(rng) for _ in range(n)]
+    return [_problem(rng, cfg) for _ in range(n)]
+
+
+def validate_cfg(c: dict) -> dict:
+    """Sanitize a client-submitted config into a safe, usable one."""
+    ops = [o for o in ("add", "sub", "mul", "div") if o in (c.get("ops") or [])] or ["add"]
+
+    def rng(key: str, dlo: int, dhi: int):
+        try:
+            lo, hi = int(c.get(key + "_min", dlo)), int(c.get(key + "_max", dhi))
+        except (TypeError, ValueError):
+            lo, hi = dlo, dhi
+        lo, hi = max(1, min(lo, 9999)), max(1, min(hi, 9999))
+        return (lo, hi) if lo <= hi else (hi, lo)
+
+    add_lo, add_hi = rng("add", 2, 100)
+    ma_lo, ma_hi = rng("mul_a", 2, 12)
+    mb_lo, mb_hi = rng("mul_b", 2, 100)
+    dur = c.get("duration")
+    return {
+        "ops": ops,
+        "add_min": add_lo, "add_max": add_hi,
+        "mul_a_min": ma_lo, "mul_a_max": ma_hi,
+        "mul_b_min": mb_lo, "mul_b_max": mb_hi,
+        "duration": dur if dur in _DURATIONS else 90,
+    }
 
 
 @dataclass
@@ -70,6 +102,7 @@ class Room:
     problems: list = field(default_factory=list)
     started: bool = False
     ended: bool = False
+    cfg: dict = field(default_factory=lambda: dict(DEFAULT_CFG))
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     timer: object = field(default=None, repr=False, compare=False)
 
@@ -103,6 +136,7 @@ def _scoreboard(room: Room) -> dict:
         "type": "scores",
         "started": room.started,
         "ended": room.ended,
+        "cfg": room.cfg,
         "players": sorted(
             [{"name": p.name, "score": p.score} for p in room.players],
             key=lambda x: -x["score"],
@@ -114,13 +148,13 @@ async def _start(room: Room) -> None:
     async with room.lock:
         if room.started:
             return
-        room.problems = make_stream()
+        room.problems = make_stream(room.cfg)
         room.started = True
         room.ended = False
         for p in room.players:
             p.score = 0
             p.idx = 0
-    await _broadcast(room, {"type": "go", "duration": DURATION_S})
+    await _broadcast(room, {"type": "go", "duration": room.cfg["duration"]})
     for p in list(room.players):
         await _send(p, {"type": "problem", "n": 0, "text": room.problems[0][0]})
     await _broadcast(room, _scoreboard(room))
@@ -129,7 +163,7 @@ async def _start(room: Room) -> None:
 
 async def _end_after(room: Room) -> None:
     try:
-        await asyncio.sleep(DURATION_S)
+        await asyncio.sleep(room.cfg["duration"])
     except asyncio.CancelledError:
         return
     async with room.lock:
@@ -147,6 +181,7 @@ async def _end_after(room: Room) -> None:
             others = [q.name for q in room.players if q is not p]
             store.record_game("zetamac", p.guest_id, p.name, won=(p in winners and not solo),
                               mode="race", opponent=others[0] if others else None, score=p.score)
+    await _broadcast(room, _scoreboard(room))  # ended=True → re-enables settings + play-again
     await _broadcast(room, {"type": "over", "winner": ranked[0].name if ranked else None,
                             "scores": _scoreboard(room)["players"]})
 
@@ -175,7 +210,11 @@ async def ws(sock: WebSocket) -> None:
         while True:
             msg = json.loads(await sock.receive_text())
             action = msg.get("type")
-            if action == "start":
+            if action == "set_config":
+                if not room.started and isinstance(msg.get("cfg"), dict):
+                    room.cfg = validate_cfg(msg["cfg"])
+                    await _broadcast(room, _scoreboard(room))
+            elif action == "start":
                 await _start(room)
             elif action == "answer":
                 if not room.started or room.ended or p.idx >= len(room.problems):

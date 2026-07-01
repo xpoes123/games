@@ -35,6 +35,10 @@
   #boardList { margin:.6rem 0 0; padding-left:1.5rem; }
   #boardList .meta { color:var(--muted); }
   #pb { color:var(--muted); margin-top:1rem; }
+  #settings { margin:.5rem 0 0; }
+  .srow { margin:.5rem 0; color:var(--muted); display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
+  .srow input[type=number] { width:4.5rem; }
+  .srow label { color:var(--fg); display:inline-flex; gap:.25rem; align-items:center; }
 </style>
 </head>
 <body>
@@ -50,7 +54,23 @@
 
   <div id="game" class="hidden">
     <div class="row"><strong>room <span id="roomCode"></span></strong>
-      <span style="color:var(--muted)">share the code; 90s, most correct wins</span></div>
+      <span style="color:var(--muted)">share the code; most correct wins</span></div>
+
+    <details id="settings">
+      <summary>settings</summary>
+      <div class="srow">operations:
+        <label><input type="checkbox" data-op="add"> +</label>
+        <label><input type="checkbox" data-op="sub"> −</label>
+        <label><input type="checkbox" data-op="mul"> ×</label>
+        <label><input type="checkbox" data-op="div"> ÷</label>
+      </div>
+      <div class="srow">addition: <input id="add_min" type="number"> to <input id="add_max" type="number"></div>
+      <div class="srow">multiply: <input id="mul_a_min" type="number"> to <input id="mul_a_max" type="number">
+        × <input id="mul_b_min" type="number"> to <input id="mul_b_max" type="number"></div>
+      <div class="srow">duration:
+        <select id="dur"><option>30</option><option>60</option><option>90</option><option>120</option></select> s</div>
+    </details>
+
     <div id="timer">ready</div>
     <div id="problem">—</div>
     <input id="answer" inputmode="numeric" autocomplete="off" disabled />
@@ -70,12 +90,30 @@ let ws, myName = "", endAt = 0, ticker = null;
 function status(msg, cls) { $("#status").textContent = msg; $("#status").style.color =
   cls === "good" ? "var(--good)" : cls === "bad" ? "var(--bad)" : "var(--muted)"; }
 
+const NUMS = ["add_min","add_max","mul_a_min","mul_a_max","mul_b_min","mul_b_max"];
+function applyCfg(c) {
+  document.querySelectorAll("[data-op]").forEach(cb => cb.checked = c.ops.includes(cb.dataset.op));
+  NUMS.forEach(k => $("#" + k).value = c[k]);
+  $("#dur").value = String(c.duration);
+}
+function gatherCfg() {
+  const ops = [...document.querySelectorAll("[data-op]:checked")].map(cb => cb.dataset.op);
+  const c = { ops, duration: +$("#dur").value };
+  NUMS.forEach(k => c[k] = +$("#" + k).value);
+  return c;
+}
+function sendCfg() { ws.send(JSON.stringify({ type: "set_config", cfg: gatherCfg() })); }
+
 function renderScores(s) {
   $("#players").innerHTML = "";
   s.players.forEach(p => { const li = document.createElement("li");
     if (p.name === myName) li.className = "me";
     li.innerHTML = `<span>${p.name}</span><span>${p.score}</span>`; $("#players").appendChild(li); });
   $("#start").disabled = s.started;
+  if (s.cfg && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "SELECT")
+    applyCfg(s.cfg);
+  $("#settings").querySelectorAll("input,select").forEach(el => el.disabled = s.started);
+  if (s.ended) $("#start").textContent = "play again";
 }
 
 function tick() {
@@ -129,6 +167,7 @@ $("#joinBtn").onclick = () => {
 };
 
 $("#start").onclick = () => ws.send(JSON.stringify({ type: "start" }));
+$("#settings").addEventListener("change", () => { if (ws && ws.readyState === 1) sendCfg(); });
 // Send on each keystroke — the server advances the instant it matches (zetamac feel).
 $("#answer").addEventListener("input", () => {
   const v = $("#answer").value.trim();
