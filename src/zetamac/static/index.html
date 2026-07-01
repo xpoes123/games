@@ -147,7 +147,8 @@ $("#joinBtn").onclick = () => {
   ws.onopen = () => ws.send(JSON.stringify({ type: "hello", name: myName, code }));
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
-    if (m.type === "joined") { $("#join").classList.add("hidden"); $("#game").classList.remove("hidden"); fetchBoards(); }
+    if (m.type === "joined") { $("#roomCode").textContent = m.code;
+      $("#join").classList.add("hidden"); $("#game").classList.remove("hidden"); fetchBoards(); }
     else if (m.type === "scores") renderScores(m);
     else if (m.type === "go") {
       endAt = Date.now() + m.duration * 1000;
