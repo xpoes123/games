@@ -76,8 +76,10 @@
     <input id="answer" inputmode="numeric" autocomplete="off" disabled />
     <div class="row" style="justify-content:center; margin-top:.75rem">
       <button id="start">start race</button>
+      <span id="waiting" class="hidden" style="color:var(--muted)">waiting for host to start…</span>
     </div>
     <div id="status"></div>
+    <div id="playersHead" style="color:var(--muted); margin-top:1rem"></div>
     <ul id="players"></ul>
     <div id="pb"></div>
     <details id="board"><summary>leaderboard (high scores)</summary><ol id="boardList"></ol></details>
@@ -85,7 +87,7 @@
 </main>
 <script>
 const $ = s => document.querySelector(s);
-let ws, myName = "", endAt = 0, ticker = null;
+let ws, myName = "", myPid = "", endAt = 0, ticker = null, cdIv = null;
 
 function status(msg, cls) { $("#status").textContent = msg; $("#status").style.color =
   cls === "good" ? "var(--good)" : cls === "bad" ? "var(--bad)" : "var(--muted)"; }
@@ -105,15 +107,22 @@ function gatherCfg() {
 function sendCfg() { ws.send(JSON.stringify({ type: "set_config", cfg: gatherCfg() })); }
 
 function renderScores(s) {
+  const isLeader = s.leader && s.leader === myPid;
+  const busy = s.started || s.counting;
+  $("#playersHead").textContent = `players (${s.players.length}):`;
   $("#players").innerHTML = "";
   s.players.forEach(p => { const li = document.createElement("li");
-    if (p.name === myName) li.className = "me";
-    li.innerHTML = `<span>${p.name}</span><span>${p.score}</span>`; $("#players").appendChild(li); });
-  $("#start").disabled = s.started;
+    if (p.pid === myPid) li.className = "me";
+    const host = p.pid === s.leader ? ' <span style="color:var(--muted)">host</span>' : "";
+    li.innerHTML = `<span>${p.name}${host}</span><span>${p.score}</span>`; $("#players").appendChild(li); });
+  $("#start").classList.toggle("hidden", !isLeader);
+  $("#start").disabled = busy;
+  $("#start").textContent = s.ended ? "play again" : "start race";
+  $("#waiting").classList.toggle("hidden", isLeader || busy);
   if (s.cfg && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "SELECT")
     applyCfg(s.cfg);
-  $("#settings").querySelectorAll("input,select").forEach(el => el.disabled = s.started);
-  if (s.ended) $("#start").textContent = "play again";
+  // Only the host edits settings.
+  $("#settings").querySelectorAll("input,select").forEach(el => el.disabled = busy || !isLeader);
 }
 
 function tick() {
@@ -147,10 +156,16 @@ $("#joinBtn").onclick = () => {
   ws.onopen = () => ws.send(JSON.stringify({ type: "hello", name: myName, code }));
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
-    if (m.type === "joined") { $("#roomCode").textContent = m.code;
+    if (m.type === "joined") { myPid = m.pid; $("#roomCode").textContent = m.code;
       $("#join").classList.add("hidden"); $("#game").classList.remove("hidden"); fetchBoards(); }
     else if (m.type === "scores") renderScores(m);
+    else if (m.type === "countdown") {
+      let n = m.seconds; status(""); $("#timer").textContent = "get ready"; $("#problem").textContent = n;
+      if (cdIv) clearInterval(cdIv);
+      cdIv = setInterval(() => { n--; $("#problem").textContent = n > 0 ? n : "go!"; if (n <= 0) { clearInterval(cdIv); cdIv = null; } }, 1000);
+    }
     else if (m.type === "go") {
+      if (cdIv) { clearInterval(cdIv); cdIv = null; }
       endAt = Date.now() + m.duration * 1000;
       $("#answer").disabled = false; $("#answer").value = ""; $("#answer").focus();
       status(""); if (ticker) clearInterval(ticker); ticker = setInterval(tick, 200); tick();

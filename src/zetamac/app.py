@@ -90,6 +90,7 @@ def validate_cfg(c: dict) -> dict:
 class Player:
     name: str
     ws: object
+    pid: str = field(default_factory=lambda: "".join(random.choices(string.ascii_lowercase, k=8)))
     guest_id: str = ""
     score: int = 0
     idx: int = 0
@@ -102,6 +103,7 @@ class Room:
     problems: list = field(default_factory=list)
     started: bool = False
     ended: bool = False
+    counting: bool = False  # countdown in progress
     cfg: dict = field(default_factory=lambda: dict(DEFAULT_CFG))
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     timer: object = field(default=None, repr=False, compare=False)
@@ -136,18 +138,32 @@ def _scoreboard(room: Room) -> dict:
         "type": "scores",
         "started": room.started,
         "ended": room.ended,
+        "counting": room.counting,
         "cfg": room.cfg,
+        "leader": room.players[0].pid if room.players else None,
         "players": sorted(
-            [{"name": p.name, "score": p.score} for p in room.players],
+            [{"name": p.name, "score": p.score, "pid": p.pid} for p in room.players],
             key=lambda x: -x["score"],
         ),
     }
 
 
-async def _start(room: Room) -> None:
+COUNTDOWN_S = 3
+
+
+async def _start(room: Room, starter: Player) -> None:
+    # Only the host (first player) can start; everyone begins together after a
+    # shared 3-2-1 countdown.
     async with room.lock:
-        if room.started:
+        if room.started or room.counting or not room.players or room.players[0] is not starter:
             return
+        room.counting = True
+    await _broadcast(room, {"type": "countdown", "seconds": COUNTDOWN_S})
+    await asyncio.sleep(COUNTDOWN_S)
+    async with room.lock:
+        if not room.counting:  # room emptied / reset during the countdown
+            return
+        room.counting = False
         room.problems = make_stream(room.cfg)
         room.started = True
         room.ended = False
@@ -203,7 +219,7 @@ async def ws(sock: WebSocket) -> None:
     if ident["discord_id"]:
         store.link_guest(p.guest_id, ident["discord_id"])
     room.players.append(p)
-    await _send(p, {"type": "joined", "code": room.code})
+    await _send(p, {"type": "joined", "code": room.code, "pid": p.pid})
     await _broadcast(room, _scoreboard(room))
 
     try:
@@ -215,7 +231,7 @@ async def ws(sock: WebSocket) -> None:
                     room.cfg = validate_cfg(msg["cfg"])
                     await _broadcast(room, _scoreboard(room))
             elif action == "start":
-                await _start(room)
+                await _start(room, p)
             elif action == "answer":
                 if not room.started or room.ended or p.idx >= len(room.problems):
                     continue
