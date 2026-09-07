@@ -4,11 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>chess — replay</title>
+  <link rel="stylesheet" href="/shared/tokyo-night.css" />
   <style>
     :root {
       color-scheme: dark;
-      --bg: #1a1b26; --fg: #c0caf5; --muted: #565f89; --border: #414868;
-      --accent: #7aa2f7; --panel: #24283b;
+      --fg: var(--text); --border: #414868;
+      --accent: var(--blue); --panel: var(--surface);
       --sq-light: #2a2e44; --sq-dark: #1f2235;
       --w-piece: #e0e0ee; --b-piece: #bb9af7;
     }
@@ -63,7 +64,7 @@
       box-shadow: inset 2px 0 0 var(--accent); }
     .events .ev.past { color: var(--muted); }
     .events .ev .who { color: var(--accent); margin-right: 0.35em; }
-    .events .ev.b .who { color: #f7768e; }
+    .events .ev.b .who { color: var(--red); }
 
     .footer-links { margin-top: 1rem; color: var(--muted); font-size: 0.8rem; }
     .footer-links a { color: var(--accent); text-decoration: none; }

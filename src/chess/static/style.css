@@ -1,16 +1,14 @@
 :root {
   color-scheme: dark;
-  --bg: #1a1b26;
-  --panel: #24283b;
+  --panel: var(--surface);
   --panel-2: #1f2335;
-  --fg: #c0caf5;
-  --muted: #565f89;
+  --fg: var(--text);
   --border: #414868;
-  --accent: #7aa2f7;
+  --accent: var(--blue);
   --accent-2: #bb9af7;
-  --good: #9ece6a;
+  --good: var(--green);
   --warn: #e0af68;
-  --bad: #f7768e;
+  --bad: var(--red);
   --gold: #e0af68;
 
   --sq-light: #2f3656;

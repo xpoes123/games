@@ -7,6 +7,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from src import auth, store
 from src.bridge.app import app as bridge_app
@@ -141,6 +142,12 @@ async def math24_slash() -> RedirectResponse:
 async def zetamac_slash() -> RedirectResponse:
     return RedirectResponse("/zetamac/", status_code=307)
 
+
+# Single vendored copy of the shared Tokyo Night token file (see
+# shared/tokyo-night.css) — served at a top-level prefix so every game's
+# HTML, regardless of its own mount depth, can link it with one absolute path.
+SHARED_DIR = Path(__file__).parent.parent / "shared"
+app.mount("/shared", StaticFiles(directory=SHARED_DIR), name="shared")
 
 # Each game is its own sub-app — isolated state, isolated WS endpoints.
 app.mount("/bridge", bridge_app)

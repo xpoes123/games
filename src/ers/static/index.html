@@ -4,10 +4,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>math ers</title>
+<link rel="stylesheet" href="/shared/tokyo-night.css" />
 <style>
-  :root { color-scheme: dark; --bg:#1a1b26; --fg:#c0caf5; --muted:#565f89;
-          --border:#414868; --accent:#7aa2f7; --panel:#24283b; --good:#9ece6a;
-          --bad:#f7768e; }
+  :root { color-scheme: dark; --fg:var(--text);
+          --border:#414868; --accent:var(--blue); --panel:var(--surface); --good:var(--green);
+          --bad:var(--red); }
   * { box-sizing: border-box; }
   body { margin:0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
          background:var(--bg); color:var(--fg); font-size:14px; }
@@ -32,7 +33,7 @@
   #card { font-size:4rem; font-weight:700; min-height:5rem; }
   #card.slappable { color:var(--good); }
   .big { font-size:1.1rem; padding:1rem 2rem; }
-  #slap { background:var(--bad); border-color:var(--bad); color:#1a1b26; font-weight:700; }
+  #slap { background:var(--bad); border-color:var(--bad); color:var(--bg); font-weight:700; }
   #status { color:var(--muted); min-height:1.4em; margin-top:1rem; }
   .hidden { display:none; }
   #clockwrap { height:3px; max-width:300px; margin:0 auto 1.25rem; background:var(--border); }

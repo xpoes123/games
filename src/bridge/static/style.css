@@ -1,19 +1,16 @@
 :root {
   color-scheme: dark;
-  --bg: #1a1b26;
-  --fg: #c0caf5;
-  --muted: #565f89;
+  --fg: var(--text);
   --border: #414868;
-  --accent: #7aa2f7;
-  --panel: #24283b;
-  --red: #f7768e;
+  --accent: var(--blue);
+  --panel: var(--surface);
   --card-bg: #d5dbf2;
-  --card-fg: #1a1b26;
+  --card-fg: var(--bg);
   --back: #2f3650;
 
   /* 4-color deck. Tuned so each suit reads at a glance on both the light
-     card face (#d5dbf2) and the dark panel/bid-info background (#24283b). */
-  --suit-spades:   #1a1b26;  /* dark on card; overridden lighter on dark bg */
+     card face (#d5dbf2) and the dark panel/bid-info background (var(--panel)). */
+  --suit-spades:   var(--bg);  /* dark on card; overridden lighter on dark bg */
   --suit-hearts:   #d6435e;
   --suit-diamonds: #3d6dd9;
   --suit-clubs:    #2f9a44;
