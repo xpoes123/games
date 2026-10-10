@@ -46,9 +46,9 @@ One-time VPS install (see `deploy/` for the artifacts):
    install it for whichever reverse proxy is already on the box, reload
 4. `systemctl enable --now games`
 
-Routine deploys: PR merge → Sentinel clones repo, copies into `/opt/games`,
+Routine deploys: PR merge → Claude sshes in, `git pull` into `/opt/games`,
 `pip install -e .`, smoke-test, `systemctl restart games`. Same flow as
-Sage/Stavid. Will need this repo registered with Sentinel.
+Sage/Stavid.
 
 ## Layout
 ```
@@ -75,7 +75,7 @@ WS endpoint (`/<game>/ws`), no interference with siblings. To add a new
 game: create `src/<name>/`, write an `app.py` exporting a FastAPI
 instance, then `app.mount("/<name>", that_app)` in `src/main.py`.
 
-## Conventions (matches Sage / Stavid / Sentinel)
+## Conventions (matches Sage / Stavid)
 - Minimal abstractions, flat over nested
 - Type hints on signatures only
 - Comments only when WHY is non-obvious
@@ -91,7 +91,7 @@ a deck tracker, synthesized piece sounds, undo, opponent-decision timer,
 in-check enforcement, refresh-survives, last-move highlight, and a
 game-over recap have all been added on top of the original 30-card engine.
 
-Deploys are manual (Sentinel is offline):
+Claude deploys directly:
   `cd /opt/games && git pull && systemctl restart games`
 
 ### Hearthstone Chess (`/chess/`)
